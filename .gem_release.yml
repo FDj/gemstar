@@ -1,0 +1,4 @@
+bump:
+  file: lib/gemstar/version.rb
+  skip_ci: true
+
