@@ -1,5 +1,14 @@
 module Gemstar
   class LockFile
+    def initialize(path)
+      @path = path
+      @specs = parse_lockfile(path)
+    end
+
+    attr_reader :specs
+
+    private
+
     def parse_lockfile(path)
       specs = {}
       in_specs = false

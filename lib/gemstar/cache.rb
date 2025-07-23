@@ -1,12 +1,23 @@
+require "fileutils"
+require "digest"
+
 module Gemstar
   class Cache
     MAX_CACHE_AGE = 60 # * 60 * 24 * 7 # 1 week
     CACHE_DIR = ".gem_changelog_cache"
 
-    FileUtils.mkdir_p(CACHE_DIR)
+    @@initialized = false
 
+    def self.init
+      return if @@initialized
 
-    def cache_fetch(key, &block)
+      FileUtils.mkdir_p(CACHE_DIR)
+      @@initialized = true
+    end
+
+    def self.fetch(key, &block)
+      init
+
       path = File.join(CACHE_DIR, Digest::SHA256.hexdigest(key))
 
       if File.exist?(path)

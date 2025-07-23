@@ -2,13 +2,78 @@
 
 module Gemstar
   class ChangeLog
+    def initialize(repo, gem_name)
+      @repo = repo
+      @gem_name = gem_name
+    end
 
-    def parse_changelog_sections(content)
+    def content
+      @content ||= fetch_changelog_content
+    end
+
+    def sections
+      @sections ||= parse_changelog_sections
+    end
+
+    def extract_relevant_sections(old_version, new_version)
+      from = Gem::Version.new(old_version.gsub(/-[\w\-]+$/, '')) rescue Gem::Version.new("0.0.0")
+      to = Gem::Version.new(new_version.gsub(/-[\w\-]+$/, '')) rescue Gem::Version.new("9999.9999.9999")
+      sections.select do |version, _|
+        v = Gem::Version.new(version.gsub(/-[\w\-]+$/, ''))
+        v > from && v <= to
+      rescue
+        false
+      end.sort_by { |v, _|
+        begin
+          Gem::Version.new(v.gsub(/-[\w\-]+$/, ''))
+        rescue
+          Gem::Version.new("0.0.0")
+        end }.reverse.to_h
+    end
+
+    private
+
+    def fetch_changelog_content
+      return nil unless @repo
+
+      if @repo =~ %r{https://github\.com/aws/aws-sdk-ruby}
+        base = "https://raw.githubusercontent.com/aws/aws-sdk-ruby/refs/heads/version-3/gems/#{gem_name}"
+        aws_style = true
+      else
+        base = @repo.sub("https://github.com", "https://raw.githubusercontent.com")
+        aws_style = false
+      end
+
+      paths = aws_style ? ["CHANGELOG.md"] : %w[
+        CHANGELOG.md Changelog.md changelog.md ChangeLog.md
+        CHANGES.md Changes.md changes.md
+        HISTORY.md History.md history.md
+      ]
+
+      remote_repository = RemoteRepository.new(base)
+
+      branches = aws_style ? [""] : remote_repository.find_main_branch
+
+      paths.product(branches).each do |file, branch|
+        url = aws_style ? "#{base}/#{file}" : "#{base}/#{branch}/#{file}"
+        # puts "Fetching changelog for #{url}"
+        content = Cache.fetch("changelog-#{url}") do
+          URI.open(url, read_timeout: 8)&.read
+        rescue
+          nil
+        end
+        return content if content
+      end
+
+      nil
+    end
+
+    def parse_changelog_sections
       sections = {}
       current = nil
       current_lines = []
 
-      content.each_line do |line|
+      content&.each_line do |line|
         if line =~ /^#+\s*\[?v?(\d[\w.\-]+)\]?(?:\s*\(.*\))?/
           version = $1
           if current && !current_lines.empty?
@@ -34,44 +99,6 @@ module Gemstar
       end
 
       sections
-    end
-
-    def extract_relevant_sections(sections, old_version, new_version)
-      from = Gem::Version.new(old_version.gsub(/-[\w\-]+$/, '')) rescue Gem::Version.new("0.0.0")
-      to   = Gem::Version.new(new_version.gsub(/-[\w\-]+$/, '')) rescue Gem::Version.new("9999.9999.9999")
-      sections.select do |version, _|
-        begin
-          v = Gem::Version.new(version.gsub(/-[\w\-]+$/, ''))
-          v > from && v <= to
-        rescue
-          false
-        end
-      end.sort_by { |v, _| Gem::Version.new(v.gsub(/-[\w\-]+$/, '')) rescue Gem::Version.new("0.0.0") }.reverse.to_h
-    end
-
-    def generate_version_range(from_str, to_str)
-      from = Gem::Version.new(from_str.gsub(/-[\w\-]+$/, ''))
-      to   = Gem::Version.new(to_str.gsub(/-[\w\-]+$/, ''))
-      result = Set.new
-
-      # Generate known version steps up to 2000 iterations max (safety limit)
-      queue = [from]
-      2000.times do
-        v = queue.pop
-        break if v.nil? || v >= to
-
-        patch = Gem::Version.new("#{v.segments[0]}.#{v.segments[1]}.#{v.segments[2] + 1}")
-        minor = Gem::Version.new("#{v.segments[0]}.#{v.segments[1] + 1}.0")
-        major = Gem::Version.new("#{v.segments[0] + 1}.0.0")
-
-        [patch, minor, major].each do |next_v|
-          next if next_v > to || result.include?(next_v)
-          result << next_v
-          queue << next_v
-        end
-      end
-
-      result.select { |v| v > from && v <= to }.sort.map(&:to_s)
     end
 
   end

@@ -23,7 +23,8 @@ Gem::Specification.new do |s|
 
   s.files = Dir.glob("lib/**/*") + Dir.glob("bin/**/*") + %w[README.md LICENSE.txt CHANGELOG.md]
   s.require_paths = ["lib"]
-  s.required_ruby_version = ">= 2.7"
+  s.executables = %w(gemstar)
+  s.required_ruby_version = ">= 3.3"
 
   s.add_development_dependency "bundler", ">= 1.15"
   s.add_development_dependency "combustion", ">= 1.1"
@@ -32,13 +33,5 @@ Gem::Specification.new do |s|
 
   s.add_dependency "kramdown", "~> 2.0"
   s.add_dependency "concurrent-ruby", "~> 1.0"
-  # s.add_dependency  "http", "~> 4.0"
-  # s.add_dependency  "json", "~> 2.0"
-  # s.add_dependency  "nokogiri", "~> 1.0"
-  # s.add_dependency  "parallel", "~> 1.0"
-  # s.add_dependency  "ruby-progressbar", "~> 1.0"
-  # s.add_dependency  "thor", "~> 1.0"
-  # s.add_dependency  "tty-prompt", "~> 0.23"
-  # s.add_dependency  "tty-table", "~> 0.12"
-  # s.add_dependency  "tty-tree", "~> 0.4"
+  s.add_dependency "thor", "~> 1.4"
 end

@@ -1,0 +1,7 @@
+#!/usr/bin/env ruby
+# -*- mode: ruby -*-
+
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require_relative "../lib/gemstar"
+
+Gemstar::CLI.start(ARGV)

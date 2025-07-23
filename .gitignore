@@ -42,3 +42,13 @@ tmp/
 
 gemfiles/*.lock
 
+.gem_changelog_cache
+# for local development
+vendor/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.development
+.env.test
+.env.production
