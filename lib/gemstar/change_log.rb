@@ -7,6 +7,8 @@ module Gemstar
       @gem_name = gem_name
     end
 
+    attr_reader :repo, :gem_name
+
     def content
       @content ||= fetch_changelog_content
     end
