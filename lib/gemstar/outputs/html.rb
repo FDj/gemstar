@@ -52,7 +52,7 @@ module Gemstar
           </head>
           <body>
             <h1>#{project_name}: Gem Updates</h1>
-            <p>Showing changes from #{diff_command.from} to #{diff_command.to || "now"}, generated on #{Time.now.strftime("%Y-%m-%d %H:%M:%S %z")}</p>
+            <p><i>Showing changes from #{diff_command.from} to #{diff_command.to || "now"}, generated on #{Time.now.strftime("%Y-%m-%d %H:%M:%S %z")}.</i></p>
             #{body}
           </body>
           </html>
