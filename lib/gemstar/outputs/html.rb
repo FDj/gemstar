@@ -8,7 +8,7 @@ module Gemstar
   module Outputs
     class HTML < Basic
       def render_diff(diff_command)
-        body = diff_command.updates.map do |gem_name, info|
+        body = diff_command.updates.sort.map do |gem_name, info|
           icon = info[:homepage_url]&.include?("github.com") ? "🐙" : "💎"
           tooltip = info[:description] ? "title=\"#{info[:description].gsub('"', "&quot;")}\"" : ""
           link = "<a href=\"#{info[:homepage_url]}\" #{tooltip} target=\"_blank\">#{gem_name}</a>"
