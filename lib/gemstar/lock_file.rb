@@ -1,8 +1,8 @@
 module Gemstar
   class LockFile
-    def initialize(path)
+    def initialize(path: nil, content: nil)
       @path = path
-      @specs = parse_lockfile(path)
+      @specs = content ? parse_content(content) : parse_lockfile(path)
     end
 
     attr_reader :specs
@@ -10,9 +10,13 @@ module Gemstar
     private
 
     def parse_lockfile(path)
+      parse_content(File.read(path))
+    end
+
+    def parse_content(content)
       specs = {}
       in_specs = false
-      File.foreach(path) do |line|
+      content.each_line do |line|
         in_specs = true if line.strip == "GEM"
         next unless in_specs
         if line =~ /^\s{4}(\S+) \((.+)\)/
@@ -22,6 +26,5 @@ module Gemstar
       end
       specs
     end
-
   end
 end
