@@ -18,6 +18,11 @@ module Gemstar
     end
 
     def extract_relevant_sections(old_version, new_version)
+      if Gemstar.debug?
+        # Only debug a single gem:
+        # return nil unless gem_name == "rouge"
+      end
+
       from = Gem::Version.new(old_version.gsub(/-[\w\-]+$/, '')) rescue Gem::Version.new("0.0.0")
       to = Gem::Version.new(new_version.gsub(/-[\w\-]+$/, '')) rescue Gem::Version.new("9999.9999.9999")
       sections.select do |version, _|

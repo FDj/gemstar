@@ -8,7 +8,6 @@ module Gemstar
     map "-D" => "diff"
 
     class_option :verbose, type: :boolean, default: false, desc: "Enable verbose output"
-    class_option :debug, type: :boolean, default: false, desc: "Enable debug output"
     class_option :lockfile, type: :string, default: "Gemfile.lock", desc: "Lockfile path"
 
     desc "diff", "Show changelogs for updated gems"

@@ -1,12 +1,8 @@
 module Gemstar
   class GitRepo
-    attr_reader :debug
-
-    def initialize(specified_directory, debug: nil)
+    def initialize(specified_directory)
       @specified_directory = specified_directory || Dir.pwd
       @tree_root_directory = find_git_root(File.dirname(@specified_directory))
-
-      @debug = debug
     end
 
     def find_git_root(directory)
@@ -25,7 +21,7 @@ module Gemstar
       git_command += ["-C", in_directory] if in_directory
       git_command += command
 
-      puts %[run_git_command (joined): #{git_command.join(" ")}] if debug
+      puts %[run_git_command (joined): #{git_command.join(" ")}] if Gemstar.debug?
 
       output = IO.popen(git_command, err: [:child, :out],
         &:read)

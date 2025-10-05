@@ -24,7 +24,7 @@ module Gemstar
         @lockfile = options[:lockfile] || "Gemfile.lock"
         @output_file = options[:output_file] || "gem_update_changelog.html"
 
-        @git_repo = Gemstar::GitRepo.new(File.dirname(@lockfile), debug: debug?)
+        @git_repo = Gemstar::GitRepo.new(File.dirname(@lockfile))
       end
 
       def run
@@ -127,7 +127,7 @@ module Gemstar
         mutex = Mutex.new
         pool = Concurrent::FixedThreadPool.new(10)
 
-        new_lockfile.specs.keys.each do |gem_name|
+        new_lockfile.specs.keys.sort.each do |gem_name|
           pool.post do
             old_version = old_lockfile.specs[gem_name]
             new_version = new_lockfile.specs[gem_name]

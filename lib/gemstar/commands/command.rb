@@ -8,10 +8,6 @@ module Gemstar
       def run
         pp @options
       end
-
-      def debug?
-        @options[:debug]
-      end
     end
   end
 end
