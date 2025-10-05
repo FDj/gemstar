@@ -3,37 +3,41 @@
 [![JRuby Build](https://github.com/FDj/gemstar/workflows/JRuby%20Build/badge.svg)](https://github.com/FDj/gemstar/actions)
 
 # Gemstar
-
-TBD
+A very preliminary gem to help you keep track of your gems.
 
 ## Installation
 
-Adding to a gem:
+Until it's released on RubyGems, you can install it from GitHub:
 
-```ruby
-# my-cool-gem.gemspec
-Gem::Specification.new do |spec|
-  # ...
-  spec.add_dependency "gemstar"
-  # ...
-end
+```shell
+# Shell
+gem install specific_install
+gem specific_install -l https://github.com/FDj/gemstar.git
 ```
 
 Or adding to your project:
 
 ```ruby
 # Gemfile
-gem "gemstar"
+group :development do
+  gem "gemstar", github: "FDj/gemstar"
+end
 ```
-
-### Supported Ruby versions
-
-- Ruby (MRI) >= 2.7.0
-- JRuby >= 9.3.0
 
 ## Usage
 
-TBD
+### `gemstar diff`
+
+Run this after you've updated your gems.
+
+```shell
+# in your project directory:
+bundle exec gemstar diff
+```
+
+This will generate an html diff report with changelog entries for each gem that was updated:
+
+![Gemstar diff command output](docs/diff.png)
 
 ## Contributing
 
