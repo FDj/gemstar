@@ -14,6 +14,7 @@ module Gemstar
     desc "diff", "Show changelogs for updated gems"
     method_option :from, type: :string, desc: "Git ref or lockfile"
     method_option :to, type: :string, desc: "Git ref or lockfile"
+    method_option :output_file, type: :string, desc: "Output file path"
     def diff
       Gemstar::Commands::Diff.new(options).run
     end
