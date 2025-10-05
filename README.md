@@ -39,6 +39,12 @@ This will generate an html diff report with changelog entries for each gem that 
 
 ![Gemstar diff command output](docs/diff.png)
 
+You can also specify from and to hashes or tags to generate a diff report for a specific range of commits:
+
+```shell
+bundle exec gemstar diff --from 8e3aa96b7027834cdbabc0d8cbd5f9455165e930 --to HEAD
+```
+
 ## Contributing
 
 Bug reports and pull requests are welcome on GitHub at [https://github.com/FDj/gemstar](https://github.com/FDj/gemstar).
