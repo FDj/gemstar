@@ -81,14 +81,14 @@ module Gemstar
       current_lines = []
 
       content&.each_line do |line|
-        if line =~ /^#+\s*\[?v?(\d[\w.\-]+)\]?(?:\s*\(.*\))?/
+        if line =~ /^#+\s*(?:Version\s+)?\[?v?(\d[\w.\-]+)\]?(?:\s*[-(].*)?/i
           version = $1
           if current && !current_lines.empty?
             sections[current] = current_lines.dup
           end
           current = version
           current_lines = [line]
-        elsif line =~ /^\s*v?(\d[\w.\-]+)\s*\(.*\)/
+        elsif line =~ /^\s*(?:Version\s+)?v?(\d[\w.\-]+)(?:\s*[-(].*)?/i
           # fallback for lines like "1.4.0 (2025-06-02)"
           version = $1
           if current && !current_lines.empty?
