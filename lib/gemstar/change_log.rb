@@ -55,6 +55,7 @@ module Gemstar
         CHANGELOG.md Changelog.md changelog.md ChangeLog.md
         CHANGES.md Changes.md changes.md
         HISTORY.md History.md history.md
+        releases.md
       ]
 
       remote_repository = RemoteRepository.new(base)
