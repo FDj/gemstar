@@ -3,7 +3,7 @@ require "digest"
 
 module Gemstar
   class Cache
-    MAX_CACHE_AGE = 60 # * 60 * 24 * 7 # 1 week
+    MAX_CACHE_AGE = 60 * 60 * 24 * 7 # 1 week
     CACHE_DIR = ".gem_changelog_cache"
 
     @@initialized = false
