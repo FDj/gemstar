@@ -19,6 +19,8 @@ module Gemstar
       def initialize(options)
         super
 
+        @debug_gem_regex = Regexp.new(options[:debug_gem_regex] || ENV["GEMSTAR_DEBUG_GEM_REGEX"] || ".*")
+
         @from = options[:from] || "HEAD"
         @to = options[:to]
         @lockfile = options[:lockfile] || "Gemfile.lock"
@@ -44,7 +46,7 @@ module Gemstar
 
         html = Outputs::HTML.new.render_diff(self)
         File.write(output_file, html)
-        puts "✅ Written to gem_update_changelog.html"
+        puts "✅ gem_update_changelog.html created."
 
         if failed.any?
           puts "\n⚠️ The following gems failed to process:"
@@ -56,22 +58,9 @@ module Gemstar
 
       def build_entry(gem_name:, old_version:, new_version:)
         metadata = Gemstar::RubyGemsMetadata.new(gem_name)
-        repo_url = metadata.extract_github_repo_url
-        changelog = Gemstar::ChangeLog.new(repo_url, gem_name)
+        repo_url = metadata.repo_uri
+        changelog = Gemstar::ChangeLog.new(metadata)
         sections = changelog.extract_relevant_sections(old_version, new_version)
-
-        # release_versions = []
-        # if repo_url && (!sections || sections.empty?)
-        #   release_versions = generate_version_range(old_version || "0.0.0", new_version)
-        # end
-
-        # release_urls = if repo_url && release_versions.any?
-        #                  release_versions.map { |ver| "#{repo_url}/releases/tag/#{ver}" }
-        #                else
-        #                  []
-        #                end
-
-        # puts "Versions in changelog for #{gem_name}: #{sections.keys.inspect}" if sections
 
         compare_url = if repo_url && old_version
           tag_from_v = "v#{old_version}"
@@ -83,7 +72,7 @@ module Gemstar
           url_raw = "#{repo_url}/compare/#{tag_from_raw}...#{tag_to_raw}"
 
           begin
-            URI.open(url_v, read_timeout: 4)
+            URI.open(url_v, read_timeout: 4) # TODO use a real HTTP client
             url_v
           rescue
             url_raw
@@ -129,11 +118,13 @@ module Gemstar
 
         new_lockfile.specs.keys.sort.each do |gem_name|
           pool.post do
+            next unless @debug_gem_regex.match?(gem_name)
+
             old_version = old_lockfile.specs[gem_name]
             new_version = new_lockfile.specs[gem_name]
             next if old_version == new_version
 
-            puts "Processing #{gem_name} (#{old_version || "new"} → #{new_version})..."
+            puts "#{gem_name} (#{old_version || "new"} → #{new_version})..."
 
             begin
               entry = build_entry(gem_name: gem_name, old_version: old_version, new_version: new_version)

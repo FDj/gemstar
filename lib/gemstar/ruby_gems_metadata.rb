@@ -18,20 +18,41 @@ module Gemstar
             URI.open(url).read
           end.then { |json|
             begin
-              JSON.parse(json)
+              JSON.parse(json) if json
             rescue
               nil
             end }
         end
     end
 
-    def extract_github_repo_url
+    def repo_uri
       return nil unless meta
 
-      url = meta["source_code_uri"] || meta["homepage_uri"] || ""
-      return nil unless url.include?("github.com")
-      url = url.gsub(/\.git$/, "")
-      url[%r{https://github\.com/[^/]+/[^/]+}]
+      @repo_uri ||= begin
+                      uri = meta["source_code_uri"]
+
+                      if uri.nil?
+                        uri = meta["homepage_uri"]
+                        if uri.include?("github.com")
+                          uri = uri[%r{http[s?]://github\.com/[^/]+/[^/]+}]
+                        end
+                      end
+
+                      uri ||= ""
+
+                      uri = uri.sub("http://", "https://")
+
+                      uri = uri.gsub(/\.git$/, "")
+
+                      if uri.include?("github.io")
+                        # Convert e.g. https://socketry.github.io/console/ to https://github.com/socketry/console/
+                        uri = uri.sub(%r{\Ahttps?://([\w-]+)\.github\.io/([^/]+)}) do
+                          "https://github.com/#{$1}/#{$2}"
+                        end
+                      end
+
+                      uri
+                    end
     end
 
   end

@@ -16,7 +16,7 @@ module Gemstar
         major = Gem::Version.new("#{v.segments[0] + 1}.0.0")
 
         [patch, minor, major].each do |next_v|
-          next if next_v > to || result.include?(next_v)
+          next if next_v > to || result&.include?(next_v)
           result << next_v
           queue << next_v
         end

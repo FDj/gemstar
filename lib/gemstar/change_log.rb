@@ -2,12 +2,11 @@
 
 module Gemstar
   class ChangeLog
-    def initialize(repo, gem_name)
-      @repo = repo
-      @gem_name = gem_name
+    def initialize(metadata)
+      @metadata = metadata
     end
 
-    attr_reader :repo, :gem_name
+    attr_reader :metadata
 
     def content
       @content ||= fetch_changelog_content
@@ -18,62 +17,76 @@ module Gemstar
     end
 
     def extract_relevant_sections(old_version, new_version)
-      if Gemstar.debug?
-        # Only debug a single gem:
-        # return nil unless gem_name == "rouge"
-      end
+      from = Gem::Version.new(old_version.gsub(/-[\w\-]+$/, "")) rescue nil if old_version
+      from ||= Gem::Version.new("0.0.0")
+      to = Gem::Version.new(new_version.gsub(/-[\w\-]+$/, "")) rescue nil if new_version
+      to ||= Gem::Version.new("9999.9999.9999")
 
-      from = Gem::Version.new(old_version.gsub(/-[\w\-]+$/, '')) rescue Gem::Version.new("0.0.0")
-      to = Gem::Version.new(new_version.gsub(/-[\w\-]+$/, '')) rescue Gem::Version.new("9999.9999.9999")
       sections.select do |version, _|
-        v = Gem::Version.new(version.gsub(/-[\w\-]+$/, ''))
+        v = Gem::Version.new(version.gsub(/-[\w\-]+$/, ""))
         v > from && v <= to
-      rescue
+      rescue => e
         false
-      end.sort_by { |v, _|
-        begin
-          Gem::Version.new(v.gsub(/-[\w\-]+$/, ''))
-        rescue
-          Gem::Version.new("0.0.0")
-        end }.reverse.to_h
+      end.sort_by do |k, _|
+        Gem::Version.new(k.gsub(/-[\w\-]+$/, ""))
+      rescue => e
+        Gem::Version.new("0.0.0")
+      end.reverse.to_h
     end
 
     private
 
-    def fetch_changelog_content
-      return nil unless @repo
+    def changelog_uri_candidates
+      candidates = [@metadata.meta["changelog_uri"]]
 
-      if @repo =~ %r{https://github\.com/aws/aws-sdk-ruby}
-        base = "https://raw.githubusercontent.com/aws/aws-sdk-ruby/refs/heads/version-3/gems/#{gem_name}"
+      if @metadata.repo_uri =~ %r{https://github\.com/aws/aws-sdk-ruby}
+        base = "https://raw.githubusercontent.com/aws/aws-sdk-ruby/refs/heads/version-3/gems/#{@metadata.gem_name}"
         aws_style = true
       else
-        base = @repo.sub("https://github.com", "https://raw.githubusercontent.com")
+        base = @metadata.repo_uri.sub("https://github.com", "https://raw.githubusercontent.com")
         aws_style = false
       end
+
+      base = base.chomp("/")
 
       paths = aws_style ? ["CHANGELOG.md"] : %w[
         CHANGELOG.md Changelog.md changelog.md ChangeLog.md
         CHANGES.md Changes.md changes.md
         HISTORY.md History.md history.md
-        releases.md History
+        releases.md History CHANGELOG.rdoc
       ]
 
       remote_repository = RemoteRepository.new(base)
 
       branches = aws_style ? [""] : remote_repository.find_main_branch
 
-      paths.product(branches).each do |file, branch|
-        url = aws_style ? "#{base}/#{file}" : "#{base}/#{branch}/#{file}"
-        # puts "Fetching changelog for #{url}"
-        content = Cache.fetch("changelog-#{url}") do
-          URI.open(url, read_timeout: 8)&.read
-        rescue
-          nil
-        end
-        return content if content
+      candidates += paths.product(branches).map do |file, branch|
+        uri = aws_style ? "#{base}/#{file}" : "#{base}/#{branch}/#{file}"
       end
 
-      nil
+      candidates.flatten!
+      candidates.compact!
+
+      candidates
+    end
+
+    def fetch_changelog_content
+      content = nil
+
+      changelog_uri_candidates.find do |candidate|
+        content = Cache.fetch("changelog-#{candidate}") do
+          URI.open(candidate, read_timeout: 8)&.read
+        rescue => e
+          puts "#{candidate}: #{e}" if Gemstar.debug?
+          nil
+        end
+
+        !content.nil?
+      end
+
+      pp content if Gemstar.debug?
+
+      content
     end
 
     def parse_changelog_sections
@@ -82,7 +95,12 @@ module Gemstar
       current_lines = []
 
       content&.each_line do |line|
-        if line =~ /^#+\s*(?:Version\s+)?\[?v?(\d[\w.\-]+)\]?(?:\s*[-(].*)?/i
+        # Convert rdoc to markdown:
+        line = line.gsub(/^=+/) do |m|
+          "#" * m.length
+        end
+
+        if line =~ /^\s*(?:#+|=+)\s*(?:Version\s+)?\[?v?(\d[\w.-]+)\]?(?:\s*[-(].*)?/i
           version = $1
           if current && !current_lines.empty?
             sections[current] = current_lines.dup
@@ -108,6 +126,5 @@ module Gemstar
 
       sections
     end
-
   end
 end
