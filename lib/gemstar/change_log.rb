@@ -2,6 +2,8 @@
 
 module Gemstar
   class ChangeLog
+    @@candidates_found = Hash.new(0)
+
     def initialize(metadata)
       @metadata = metadata
     end
@@ -18,6 +20,9 @@ module Gemstar
         if s.nil? || s.empty?
           s = parse_github_release_sections
         end
+
+        pp @@candidates_found if Gemstar.debug?
+
         s
       end
     end
@@ -70,10 +75,11 @@ module Gemstar
       base = base.chomp("/")
 
       paths = aws_style ? ["CHANGELOG.md"] : %w[
-        CHANGELOG.md Changelog.md changelog.md ChangeLog.md
-        CHANGES.md Changes.md changes.md
+        CHANGELOG.md releases.md CHANGES.md
+        Changelog.md changelog.md ChangeLog.md
+        Changes.md changes.md
         HISTORY.md History.md history.md
-        releases.md History CHANGELOG.rdoc
+        History CHANGELOG.rdoc
       ]
 
       remote_repository = RemoteRepository.new(base)
@@ -106,6 +112,10 @@ module Gemstar
         end
 
         # puts "fetch_changelog_content #{candidate}:\n#{content}" if Gemstar.debug?
+
+        if content
+          @@candidates_found[candidate.split("/").last] += 1
+        end
 
         !content.nil?
       end

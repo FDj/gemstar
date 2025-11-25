@@ -22,4 +22,4 @@
 - Diff: Fetch raw GitHub changelogs, not html.
 - Diff: Support GitHub releases.
 - Diff: Improved Markup rendering (with code samples)
-- Diff: 
+- Diff: Try release notes in order of match frequency.
