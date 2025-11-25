@@ -32,6 +32,9 @@ Gem::Specification.new do |s|
   s.add_development_dependency "minitest", "~> 5.0"
 
   s.add_dependency "kramdown", "~> 2.0"
+  s.add_dependency "kramdown-parser-gfm", "~> 1.0"
+  s.add_dependency "rouge", ">= 4"
   s.add_dependency "concurrent-ruby", "~> 1.0"
   s.add_dependency "thor", "~> 1.4"
+  s.add_dependency "nokogiri", ">= 1.18"
 end

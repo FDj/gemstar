@@ -3,6 +3,11 @@
 require_relative "basic"
 require "pathname"
 require "kramdown"
+begin
+  require "kramdown-parser-gfm"
+rescue LoadError
+  # Optional dependency: if not available, we'll gracefully fall back to the default parser
+end
 
 module Gemstar
   module Outputs
@@ -14,8 +19,15 @@ module Gemstar
           link = "<a href=\"#{info[:homepage_url]}\" #{tooltip} target=\"_blank\">#{gem_name}</a>"
           html = if info[:sections]
             info[:sections].map do |_version, lines|
+              html_chunk = begin
+                opts = { hard_wrap: false }
+                opts[:input] = "GFM" if defined?(Kramdown::Parser::GFM)
+                Kramdown::Document.new(lines.join, opts).to_html
+              rescue Kramdown::Error
+                Kramdown::Document.new(lines.join, { hard_wrap: false }).to_html
+              end
               <<~HTML
-                #{Kramdown::Document.new(lines.join).to_html}
+                #{html_chunk}
               HTML
             end.join("\n")
           elsif info[:release_urls]
