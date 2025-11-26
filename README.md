@@ -14,7 +14,11 @@ The easiest way to install gemstar is to use Bundler:
 gem install gemstar
 ```
 
-Alternatively, add it to the development group in your Gemfile.
+Alternatively, add it to the development group in your Gemfile:
+
+```
+gem "gemstar", group: :development
+```
 
 ## Usage
 
