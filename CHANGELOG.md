@@ -11,11 +11,15 @@
         - actioncable-next uses release tag names?
         - paper_trail not using CHANGELOG.md?
         - playwright-ruby-client uses release tags?
-    - support ```ruby ```
+    - bundler itself
+    - use changelog files from installed gems where present
 
 ## Unreleased
 
+## 0.0.2
+
 - Diff: Fix regex warnings shown in terminal.
+- Diff: Simplify and fix change log section parsing.
 
 ## 0.0.1
 

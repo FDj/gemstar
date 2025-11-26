@@ -53,9 +53,12 @@ module Gemstar
       return nil unless line
       heading = line.to_s
       # 1) Prefer version inside parentheses after a date: "### 2025-11-07 (2.16.0)"
-      return $1 if heading[/\(\s*v?(\d[\w.\-]+)\s*\)/]
+      #    Ensure we ONLY treat it as a version if it actually looks like a version (has a dot),
+      #    so we don't capture dates like (2025-11-21).
+      return $1 if heading[/\(\s*v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\s*\)/]
       # 2) Version-first with optional leading markers/labels: "## v1.2.6 - 2025-10-21"
-      return $1 if heading[/^\s*(?:#+|=+)?\s*(?:Version\s+)?\[?v?(\d[\w.\-]+)\]?/i]
+      #    Require a dot in the numeric token to avoid capturing dates like 2025-11-21.
+      return $1 if heading[/^\s*(?:#+|=+)?\s*(?:Version\s+)?\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?/i]
       # 3) Anywhere: first semver-like token with a dot
       return $1 if heading[/\bv?(\d+\.\d+(?:\.\d+)?(?:[A-Za-z0-9.\-])*)\b/]
       nil
@@ -124,6 +127,15 @@ module Gemstar
     end
 
 
+    VERSION_PATTERNS = [
+      /^\s*(?:#+|=+)\s*\d{4}-\d{2}-\d{2}\s*\(\s*v?(\d[\w.\-]+)\s*\)/, # prefer this
+      /^\s*(?:#+|=+)\s*\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?\s*(?:—|–|-)\s*\d{4}-\d{2}-\d{2}\b/,
+      /^\s*(?:#+|=+)\s*(?:Version\s+)?(?:(?:[^\s\d][^\s]*\s+)+)\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?(?:\s*[-(].*)?/i,
+      /^\s*(?:#+|=+)\s*(?:Version\s+)?\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?(?:\s*[-(].*)?/i,
+      /^\s*(?:Version\s+)?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)(?:\s*[-(].*)?/i
+    ]
+
+
     def parse_changelog_sections
       # If the fetched content looks like a GitHub Releases HTML page, return {}
       # so that the GitHub releases scraper can handle it. This avoids
@@ -136,108 +148,44 @@ module Gemstar
         return {}
       end
 
+      lines = c.lines
+
+      if lines.count < 4
+        # Skip changelog files that are too short to be useful
+        # This is sometimes the case with changelogs just saying "please see GitHub releases"
+        puts "parse_changelog_sections #{@metadata.gem_name}: Changelog too short; skipping" if Gemstar.debug?
+        return {}
+      end
+
       sections = {}
       current_key = nil
       current_lines = []
 
-      flush_current = lambda do
-        return unless current_key && !current_lines.empty?
-        key = current_key
-        # If key looks like a date or non-version, try to extract a proper version
-        if key =~ /\A\d{4}-\d{2}-\d{2}\z/ || key !~ /\A\d[\w.\-]*\z/
-          v = extract_version_from_heading(current_lines.first)
-          key = v if v
-        end
-        if sections.key?(key)
-          # Collision: merge by appending with a separator to avoid losing data
-          sections[key] += ["\n"] + current_lines
-        else
-          sections[key] = current_lines.dup
-        end
-      end
-
-      c.each_line do |line|
+      lines.each do |line|
         # Convert rdoc to markdown:
         line = line.gsub(/^=+/) { |m| "#" * m.length }
 
-        new_key = nil
-        # Keep-a-Changelog style: version first with trailing date, e.g. "## v1.2.6 - 2025-10-21"
-        if line =~ /^\s*(?:#+|=+)\s*\[?v?(\d[\w.\-]+)\]?\s*(?:—|–|-)\s*\d{4}-\d{2}-\d{2}\b/
+        m = VERSION_PATTERNS.lazy.map { |re| line.match(re) }.find(&:itself)
+
+        if m
           new_key = extract_version_from_heading(line) || $1
-        elsif line =~ /^\s*(?:#+|=+)\s*(?:Version\s+)?(?:(?:[^\s\d][^\s]*\s+)+)\[?v?(\d[\w.\-]+)\]?(?:\s*[-(].*)?/i
-          new_key = extract_version_from_heading(line) || $1
-        elsif line =~ /^\s*(?:#+|=+)\s*(?:Version\s+)?\[?v?(\d[\w.\-]+)\]?(?:\s*[-(].*)?/i
-          # header without label words before the version
-          new_key = extract_version_from_heading(line) || $1
-        elsif line =~ /^\s*(?:#+|=+)\s*\d{4}-\d{2}-\d{2}\s*\(\s*v?(\d[\w.\-]+)\s*\)/
-          # headings like "### 2025-11-07 (2.16.0)" — prefer the version in parentheses over the leading date
-          new_key = extract_version_from_heading(line) || $1
-        elsif line =~ /^\s*(?:Version\s+)?v?(\d[\w.\-]+)(?:\s*[-(].*)?/i
-          # fallback for lines like "1.4.0 (2025-06-02)"
-          new_key = extract_version_from_heading(line) || $1
+
+          if current_key
+            sections[current_key] ||= []
+            sections[current_key] << current_lines
+            current_lines = []
+          end
+
+          current_key = new_key
         end
 
-        if new_key
-          # Flush previous section before starting a new one
-          flush_current.call
-          current_key = new_key
-          current_lines = [line]
-        elsif current_key
-          current_lines << line
-        end
+        current_lines << line if current_key
       end
 
-      # Flush the last captured section
-      flush_current.call
-
-      # Normalize keys: ensure all keys are versions; fix any leftover date-like keys conservatively
-      begin
-        normalized = {}
-        sections.each do |k, lines|
-          if k =~ /\A\d{4}-\d{2}-\d{2}\z/ || k !~ /\A\d[\w.\-]*\z/
-            heading = lines.first.to_s
-            # 1) Prefer version inside parentheses, e.g., "### 2025-11-07 (2.16.0)"
-            if heading[/\(\s*v?(\d[\w.\-]+)\s*\)/]
-              key = $1
-              normalized[key] = if normalized.key?(key)
-                                   normalized[key] + ["\n"] + lines
-                                 else
-                                   lines
-                                 end
-              next
-            end
-            # 2) Headings like "## v1.2.5 - 2025-10-21" or "## 1.2.5 — 2025-10-21"
-            if heading[/^\s*(?:#+|=+)\s*(?:Version\s+)?\[?v?(\d+\.\d+(?:\.\d+)?(?:[A-Za-z0-9.\-])*)\]?/]
-              key = $1
-              normalized[key] = if normalized.key?(key)
-                                   normalized[key] + ["\n"] + lines
-                                 else
-                                   lines
-                                 end
-              next
-            end
-            # 3) Anywhere in the heading, pick the first semver-like token with a dot
-            if heading[/\bv?(\d+\.\d+(?:\.\d+)?(?:[A-Za-z0-9.\-]+)?)\b/]
-              key = $1
-              normalized[key] = if normalized.key?(key)
-                                   normalized[key] + ["\n"] + lines
-                                 else
-                                   lines
-                                 end
-              next
-            end
-          end
-          # Default: carry over, merging on collision to avoid loss
-          if normalized.key?(k)
-            normalized[k] += ["\n"] + lines
-          else
-            normalized[k] = lines
-          end
-        end
-        sections = normalized unless normalized.empty?
-      rescue => e
-        # Be conservative; if normalization fails for any reason, keep original sections
-        puts "Normalization error in parse_changelog_sections: #{e}" if Gemstar.debug?
+      if current_key
+        # Flush last section
+        sections[current_key] ||= []
+        sections[current_key] << current_lines
       end
 
       if Gemstar.debug?
