@@ -13,7 +13,11 @@
         - playwright-ruby-client uses release tags?
     - support ```ruby ```
 
-## 0.1
+## Unreleased
+
+- Diff: Fix regex warnings shown in terminal.
+
+## 0.0.1
 
 - Initial release
 - Add GEMSTAR_DEBUG_GEM_REGEX to debug specific gems.

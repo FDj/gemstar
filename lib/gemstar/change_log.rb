@@ -57,7 +57,7 @@ module Gemstar
       # 2) Version-first with optional leading markers/labels: "## v1.2.6 - 2025-10-21"
       return $1 if heading[/^\s*(?:#+|=+)?\s*(?:Version\s+)?\[?v?(\d[\w.\-]+)\]?/i]
       # 3) Anywhere: first semver-like token with a dot
-      return $1 if heading[/\bv?(\d+\.\d+(?:\.\d+)?(?:[A-Za-z0-9.\-]+)?)\b/]
+      return $1 if heading[/\bv?(\d+\.\d+(?:\.\d+)?(?:[A-Za-z0-9.\-])*)\b/]
       nil
     end
 
@@ -207,7 +207,7 @@ module Gemstar
               next
             end
             # 2) Headings like "## v1.2.5 - 2025-10-21" or "## 1.2.5 — 2025-10-21"
-            if heading[/^\s*(?:#+|=+)\s*(?:Version\s+)?\[?v?(\d+\.\d+(?:\.\d+)?(?:[A-Za-z0-9.\-]+)?)\]?/]
+            if heading[/^\s*(?:#+|=+)\s*(?:Version\s+)?\[?v?(\d+\.\d+(?:\.\d+)?(?:[A-Za-z0-9.\-])*)\]?/]
               key = $1
               normalized[key] = if normalized.key?(key)
                                    normalized[key] + ["\n"] + lines
