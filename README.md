@@ -7,32 +7,24 @@ A very preliminary gem to help you keep track of your gems.
 
 ## Installation
 
-Until it's released on RubyGems, you can install it from GitHub:
+The easiest way to install gemstar is to use Bundler:
 
 ```shell
 # Shell
-gem install specific_install
-gem specific_install -l https://github.com/FDj/gemstar.git
+gem install gemstar
 ```
 
-Or adding to your project:
-
-```ruby
-# Gemfile
-group :development do
-  gem "gemstar", github: "FDj/gemstar"
-end
-```
+Alternatively, add it to the development group in your Gemfile.
 
 ## Usage
 
-### `gemstar diff`
+### gemstar diff
 
 Run this after you've updated your gems.
 
 ```shell
-# in your project directory:
-bundle exec gemstar diff
+# in your project directory, after bundle update:
+gemstar diff
 ```
 
 This will generate an html diff report with changelog entries for each gem that was updated:
@@ -42,7 +34,13 @@ This will generate an html diff report with changelog entries for each gem that 
 You can also specify from and to hashes or tags to generate a diff report for a specific range of commits:
 
 ```shell
-bundle exec gemstar diff --from 8e3aa96b7027834cdbabc0d8cbd5f9455165e930 --to HEAD
+gemstar diff --from 8e3aa96b7027834cdbabc0d8cbd5f9455165e930 --to HEAD
+```
+
+To examine a specific Gemfile.lock, pass it like this:
+
+```shell
+gemstar diff --lockfile=~/MyProject/Gemfile.lock
 ```
 
 ## Contributing
