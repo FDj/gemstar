@@ -16,15 +16,15 @@ module Gemstar
 
     def sections
       @sections ||= begin
-        s = parse_changelog_sections
-        if s.nil? || s.empty?
-          s = parse_github_release_sections
-        end
+                      s = parse_changelog_sections
+                      if s.nil? || s.empty?
+                        s = parse_github_release_sections
+                      end
 
-        pp @@candidates_found if Gemstar.debug?
+                      pp @@candidates_found if Gemstar.debug?
 
-        s
-      end
+                      s
+                    end
     end
 
     def extract_relevant_sections(old_version, new_version)
@@ -126,7 +126,6 @@ module Gemstar
       content
     end
 
-
     VERSION_PATTERNS = [
       /^\s*(?:#+|=+)\s*\d{4}-\d{2}-\d{2}\s*\(\s*v?(\d[\w.\-]+)\s*\)/, # prefer this
       /^\s*(?:#+|=+)\s*\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?\s*(?:—|–|-)\s*\d{4}-\d{2}-\d{2}\b/,
@@ -134,7 +133,6 @@ module Gemstar
       /^\s*(?:#+|=+)\s*(?:Version\s+)?\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?(?:\s*[-(].*)?/i,
       /^\s*(?:Version\s+)?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)(?:\s*[-(].*)?/i
     ]
-
 
     def parse_changelog_sections
       # If the fetched content looks like a GitHub Releases HTML page, return {}
@@ -220,10 +218,10 @@ module Gemstar
       return {} if html.nil? || html.strip.empty?
 
       doc = begin
-        Nokogiri::HTML5(html)
-      rescue => _
-        Nokogiri::HTML(html)
-      end
+              Nokogiri::HTML5(html)
+            rescue => _
+              Nokogiri::HTML(html)
+            end
 
       sections = {}
 
