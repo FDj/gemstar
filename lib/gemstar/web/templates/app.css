@@ -28,6 +28,12 @@
         color: inherit;
         text-decoration: none;
       }
+      a[data-gem-link-inline="true"] {
+        color: #2563c9;
+      }
+      a[data-gem-link-inline="true"]:hover {
+        text-decoration: underline;
+      }
       button,
       select {
         font: inherit;
@@ -328,6 +334,11 @@
         min-width: 0;
         flex: 1 1 auto;
       }
+      .detail-title-version {
+        font-size: 0.62em;
+        font-weight: 600;
+        color: var(--muted);
+      }
       .detail-title-row .link-strip {
         margin-left: auto;
         align-self: start;
@@ -444,6 +455,12 @@
       }
       .revision-markup {
         padding: 0.7rem;
+      }
+      .revision-markup a[href] {
+        color: #2563c9;
+      }
+      .revision-markup a[href]:hover {
+        text-decoration: underline;
       }
       .revision-markup > :first-child {
         margin-top: 0;

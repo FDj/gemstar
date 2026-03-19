@@ -71,6 +71,8 @@ module Gemstar
         @selected_from_revision_id = selected_from_revision_id(params["from"])
         @selected_to_revision_id = selected_to_revision_id(@selected_to_revision_id)
         @gem_states = @selected_project ? @selected_project.gem_states(from_revision_id: @selected_from_revision_id, to_revision_id: @selected_to_revision_id) : []
+        @requested_gem_name = params["gem"]
+        @selected_filter = selected_filter(params["filter"], params["gem"])
         @selected_gem = selected_gem_state(params["gem"])
       end
 
@@ -109,12 +111,32 @@ module Gemstar
         valid_ids.include?(candidate) ? candidate : valid_ids.first || "worktree"
       end
 
+      def selected_filter(raw_filter, raw_gem_name)
+        return "all" if @gem_states.empty?
+        return raw_filter if %w[updated all].include?(raw_filter)
+
+        selected_gem = @gem_states.find { |gem| gem[:name] == raw_gem_name }
+        return "all" if selected_gem && selected_gem[:status] == :unchanged
+
+        @gem_states.any? { |gem| gem[:status] != :unchanged } ? "updated" : "all"
+      end
+
       def selected_gem_state(raw_gem_name)
         return nil if @gem_states.empty?
 
-        @gem_states.find { |gem| gem[:name] == raw_gem_name } ||
+        exact_match = @gem_states.find { |gem| gem[:name] == raw_gem_name }
+        return exact_match if exact_match
+
+        @gem_states.find { |gem| gem_visible_in_selected_filter?(gem) && gem[:status] != :unchanged } ||
+          @gem_states.find { |gem| gem_visible_in_selected_filter?(gem) } ||
           @gem_states.find { |gem| gem[:status] != :unchanged } ||
           @gem_states.first
+      end
+
+      def gem_visible_in_selected_filter?(gem_state)
+        return true if @selected_filter != "updated"
+
+        gem_state[:status] != :unchanged
       end
 
       def render_shell
@@ -290,8 +312,8 @@ module Gemstar
             <div class="sidebar-header">
               <h2>Gems</h2>
               <div class="list-filters" data-list-filters>
-                <button type="button" class="list-filter-button is-active" data-filter-button="updated">Updated</button>
-                <button type="button" class="list-filter-button" data-filter-button="all">All</button>
+                <button type="button" class="list-filter-button#{' is-active' if @selected_filter == "updated"}" data-filter-button="updated">Updated</button>
+                <button type="button" class="list-filter-button#{' is-active' if @selected_filter == "all"}" data-filter-button="all">All</button>
               </div>
             </div>
             #{render_gem_list}
@@ -310,15 +332,15 @@ module Gemstar
           selected = gem[:name] == @selected_gem[:name] ? " is-selected" : ""
           status_class = " status-#{gem[:status]}"
           updated = gem[:status] != :unchanged
-          hidden = updated ? "" : ' hidden="hidden"'
+          hidden = @selected_filter == "updated" && !updated && gem[:name] != @requested_gem_name ? ' hidden="hidden"' : ""
           <<~HTML
             <a
               class="gem-row#{selected}#{status_class}"
-              href="#{project_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, gem: gem[:name])}"
+              href="#{project_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, gem: gem[:name])}"
               data-gem-link="true"
               data-gem-name="#{h(gem[:name])}"
               data-gem-updated="#{updated}"
-              data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, gem: gem[:name]))}"
+              data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, gem: gem[:name]))}"
               #{hidden}
             >
               <span class="gem-name-row">
@@ -347,7 +369,7 @@ module Gemstar
         detail_pending = detail_pending?(@selected_gem[:name], metadata)
 
         <<~HTML
-          <section class="detail" data-detail-panel data-detail-pending="#{detail_pending}" data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, gem: @selected_gem[:name]))}">
+          <section class="detail" data-detail-panel data-detail-pending="#{detail_pending}" data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, gem: @selected_gem[:name]))}">
             #{render_detail_hero(metadata)}
             #{render_detail_loading_notice if detail_pending}
             #{render_detail_revision_panel}
@@ -368,8 +390,9 @@ module Gemstar
 
       def render_detail_hero(metadata)
         description = metadata&.dig("info")
-        origin_labels = Array(@selected_gem[:bundle_origin_labels])
-        bundled_version = @selected_gem[:new_version] || @selected_gem[:old_version]
+        bundle_origins = Array(@selected_gem[:bundle_origins])
+        requirement_names = selected_gem_requirements
+        bundled_version = @selected_gem[:new_version]
         title_url = metadata&.dig("homepage_uri")
         title_url = Gemstar::RubyGemsMetadata.new(@selected_gem[:name]).repo_uri(cache_only: true) if title_url.to_s.empty?
         title_markup = if title_url.to_s.empty?
@@ -382,35 +405,36 @@ module Gemstar
           <section class="detail-hero">
             <div class="detail-hero-copy">
               <div class="detail-title-row">
-                <h2>#{title_markup}</h2>
+                <h2>#{title_markup}#{bundled_version ? %(<span class="detail-title-version"> #{h(bundled_version)}</span>) : ""}</h2>
                 #{render_detail_links(metadata)}
               </div>
               <p class="detail-subtitle">#{description ? h(description) : "Metadata will appear here when RubyGems information is available."}</p>
-              #{bundled_version ? %(<p class="detail-origin"><strong>Bundled version:</strong> #{h(bundled_version)}</p>) : ""}
-              #{render_dependency_origins(origin_labels)}
+              #{render_dependency_origins(bundle_origins)}
+              #{render_requirements(requirement_names)}
             </div>
           </section>
         HTML
       end
 
-      def render_dependency_origins(origin_labels)
-        return "" if origin_labels.empty?
+      def render_dependency_origins(bundle_origins)
+        origins = Array(bundle_origins).filter_map do |origin|
+          path = Array(origin[:path]).compact
+          next if path.empty?
 
-        if origin_labels.length == 1
-          <<~HTML
-            <p class="detail-origin"><strong>Dependency:</strong> #{h(origin_labels.first)}</p>
-          HTML
-        else
-          items = origin_labels.map { |label| "<li>#{h(label)}</li>" }.join
-          <<~HTML
-            <div class="detail-origin">
-              <strong>Dependencies</strong>
-              <ul class="detail-origin-list">
-                #{items}
-              </ul>
-            </div>
-          HTML
-        end
+          linked_path = linked_gem_chain(["Gemfile", *path])
+          origin[:type] == :direct ? "Gemfile" : linked_path
+        end.uniq
+        return "" if origins.empty?
+
+        items = origins.map { |origin| "<li>#{origin}</li>" }.join
+        <<~HTML
+          <div class="detail-origin">
+            <strong>Required by</strong>
+            <ul class="detail-origin-list">
+              #{items}
+            </ul>
+          </div>
+        HTML
       end
 
       def render_detail_links(metadata)
@@ -428,6 +452,49 @@ module Gemstar
             #{buttons.join}
           </section>
         HTML
+      end
+
+      def render_requirements(requirement_names)
+        names = Array(requirement_names).compact.uniq
+        return "" if names.empty?
+
+        items = names.map { |name| "<li>#{internal_gem_link(name)}</li>" }.join
+        <<~HTML
+          <div class="detail-origin">
+            <strong>Requires</strong>
+            <ul class="detail-origin-list">
+              #{items}
+            </ul>
+          </div>
+        HTML
+      end
+
+      def selected_gem_requirements
+        lockfile = if @selected_gem[:new_version]
+          @selected_project&.lockfile_for_revision(@selected_to_revision_id)
+        else
+          @selected_project&.lockfile_for_revision(@selected_from_revision_id)
+        end
+
+        Array(lockfile&.dependency_graph&.fetch(@selected_gem[:name], nil))
+      end
+
+      def linked_gem_chain(names)
+        Array(names).map.with_index do |name, index|
+          index.zero? ? h(name) : internal_gem_link(name)
+        end.join(" → ")
+      end
+
+      def internal_gem_link(name)
+        href = project_query(
+          project: @selected_project_index,
+          from: @selected_from_revision_id,
+          to: @selected_to_revision_id,
+          filter: @selected_filter,
+          gem: name
+        )
+
+        %(<a href="#{h(href)}" data-gem-link-inline="true">#{h(name)}</a>)
       end
 
       def render_detail_revision_panel
@@ -703,15 +770,16 @@ module Gemstar
         html
       end
 
-      def detail_query(project:, from:, to:, gem:)
-        "/detail?#{URI.encode_www_form(project: project, from: from, to: to, gem: gem)}"
+      def detail_query(project:, from:, to:, filter:, gem:)
+        "/detail?#{URI.encode_www_form(project: project, from: from, to: to, filter: filter, gem: gem)}"
       end
 
-      def project_query(project:, from:, to:, gem:)
+      def project_query(project:, from:, to:, filter:, gem:)
         params = {
           project: project,
           from: from,
           to: to,
+          filter: filter,
           gem: gem
         }.compact
 
@@ -743,6 +811,7 @@ module Gemstar
         script = render_template(
           "app.js.erb",
           empty_detail_html_json: empty_detail_html.dump,
+          selected_filter_json: @selected_filter.dump,
           selected_project_index: @selected_project_index || 0
         )
 

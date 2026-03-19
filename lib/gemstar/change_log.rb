@@ -61,15 +61,16 @@ module Gemstar
     def extract_version_from_heading(line)
       return nil unless line
       heading = line.to_s
+      version_token = /(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)/
       # 1) Prefer version inside parentheses after a date: "### 2025-11-07 (2.16.0)"
       #    Ensure we ONLY treat it as a version if it actually looks like a version (has a dot),
       #    so we don't capture dates like (2025-11-21).
-      return $1 if heading[/\(\s*v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\s*\)/]
+      return $1 if heading[/\(\s*v?#{version_token}(?![A-Za-z0-9])\s*\)/]
       # 2) Version-first with optional leading markers/labels: "## v1.2.6 - 2025-10-21"
       #    Require a dot in the numeric token to avoid capturing dates like 2025-11-21.
-      return $1 if heading[/^\s*(?:#+|=+)?\s*(?:Version\s+)?\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?/i]
+      return $1 if heading[/^\s*(?:[-*]\s+)?(?:#+|=+)?\s*(?:Version\s+)?\[*v?#{version_token}(?![A-Za-z0-9])\]*/i]
       # 3) Anywhere: first semver-like token with a dot
-      return $1 if heading[/\bv?(\d+\.\d+(?:\.\d+)?(?:[A-Za-z0-9.\-])*)\b/]
+      return $1 if heading[/\bv?#{version_token}(?![A-Za-z0-9])\b/]
       nil
     end
 
@@ -144,11 +145,11 @@ module Gemstar
     end
 
     VERSION_PATTERNS = [
-      /^\s*(?:#+|=+)\s*\d{4}-\d{2}-\d{2}\s*\(\s*v?(\d[\w.\-]+)\s*\)/, # prefer this
-      /^\s*(?:#+|=+)\s*\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?\s*(?:—|–|-)\s*\d{4}-\d{2}-\d{2}\b/,
-      /^\s*(?:#+|=+)\s*(?:Version\s+)?(?:(?:[^\s\d][^\s]*\s+)+)\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?(?:\s*[-(].*)?/i,
-      /^\s*(?:#+|=+)\s*(?:Version\s+)?\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?(?:\s*[-(].*)?/i,
-      /^\s*(?:Version\s+)?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)(?:\s*[-(].*)?/i
+      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*\d{4}-\d{2}-\d{2}\s*\(\s*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\s*\)/, # prefer this
+      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*\[*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\]*\s*(?:—|–|-)\s*\d{4}-\d{2}-\d{2}\b/,
+      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*(?:Version\s+)?(?:(?:[^\s\d][^\s]*\s+)+)\[*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\]*(?:\s*[-(].*)?/i,
+      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*(?:Version\s+)?\[*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\]*(?:\s*[-(].*)?/i,
+      /^\s*(?:[-*]\s+)?(?:Version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])(?:\s*[-(].*)?/i
     ]
 
     def parse_changelog_sections(cache_only: false)
@@ -234,6 +235,14 @@ module Gemstar
             puts "#{url}: #{e}" if Gemstar.debug?
             nil
           end
+        end
+      end
+
+      if (html.nil? || html.strip.empty?) && cache_only
+        cached_content = content(cache_only: true)
+        if cached_content&.include?("<html") &&
+           (cached_content.include?('data-test-selector="body-content"') || cached_content.include?("/releases/tag/"))
+          html = cached_content
         end
       end
 

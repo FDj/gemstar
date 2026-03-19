@@ -60,6 +60,10 @@ module Gemstar
                  end
                end
 
+               if uri.include?("github.com")
+                 uri = uri[%r{\Ahttps?://github\.com/[^/]+/[^/]+}] || uri
+               end
+
                uri
              end
 

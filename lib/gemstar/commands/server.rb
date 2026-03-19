@@ -7,7 +7,7 @@ module Gemstar
       DEFAULT_BIND = "127.0.0.1"
       DEFAULT_PORT = 2112
       RELOAD_ENV_VAR = "GEMSTAR_RELOAD_ACTIVE"
-      RELOAD_GLOB = "{lib/**/*.rb,bin/gemstar,README.md}"
+      RELOAD_GLOB = "{lib/**/*.rb,lib/gemstar/web/templates/**/*,bin/gemstar,README.md}"
 
       attr_reader :bind
       attr_reader :port
