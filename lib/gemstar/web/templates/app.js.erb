@@ -1,0 +1,201 @@
+(() => {
+  const projectSelect = document.querySelector("[data-project-select]");
+  const fromSelect = document.querySelector("[data-from-select]");
+  const toSelect = document.querySelector("[data-to-select]");
+  const sidebarPanel = document.querySelector("[data-sidebar-panel]");
+  const filterButtons = Array.from(document.querySelectorAll("[data-filter-button]"));
+  const emptyGemList = document.querySelector("[data-gem-list-empty]");
+  let detailPanel = document.querySelector("[data-detail-panel]");
+  const gemLinks = Array.from(document.querySelectorAll("[data-gem-link]"));
+  let detailPollTimer = null;
+  let currentFilter = gemLinks.some((link) => link.dataset.gemUpdated === "true") ? "updated" : "all";
+  const emptyDetailHtml = <%= empty_detail_html_json %>;
+
+  const visibleGemLinks = () => gemLinks.filter((link) => !link.hidden);
+  const currentSelectedIndex = () => visibleGemLinks().findIndex((link) => link.classList.contains("is-selected"));
+  const clearSidebarSelection = () => {
+    gemLinks.forEach((link) => {
+      link.classList.remove("is-selected");
+    });
+  };
+
+  const applyGemFilter = (filter) => {
+    currentFilter = filter;
+
+    filterButtons.forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.filterButton === filter);
+    });
+
+    gemLinks.forEach((link) => {
+      const updated = link.dataset.gemUpdated === "true";
+      link.hidden = filter === "updated" && !updated;
+    });
+
+    if (emptyGemList) {
+      emptyGemList.hidden = !(filter === "updated" && visibleGemLinks().length === 0);
+    }
+
+    if (currentSelectedIndex() === -1) {
+      clearSidebarSelection();
+      replaceDetail(emptyDetailHtml);
+    }
+  };
+
+  const syncSidebarSelection = (gemName = null, keepVisible = false) => {
+    const effectiveGemName = gemName || new URL(window.location.href).searchParams.get("gem");
+    if (!effectiveGemName) {
+      clearSidebarSelection();
+      return;
+    }
+
+    let selectedLink = null;
+    gemLinks.forEach((link) => {
+      const matches = link.dataset.gemName === effectiveGemName;
+      link.classList.toggle("is-selected", matches);
+      if (matches) {
+        selectedLink = link;
+      }
+    });
+
+    if (keepVisible && sidebarPanel && selectedLink) {
+      selectedLink.scrollIntoView({ block: "nearest" });
+    }
+  };
+
+  if ("scrollRestoration" in history) {
+    history.scrollRestoration = "manual";
+  }
+
+  const replaceDetail = (html) => {
+    if (!detailPanel) return;
+    detailPanel.outerHTML = html;
+    detailPanel = document.querySelector("[data-detail-panel]");
+    if (detailPanel) detailPanel.scrollTop = 0;
+    scheduleDetailPoll();
+  };
+
+  const stopDetailPoll = () => {
+    if (detailPollTimer) {
+      clearTimeout(detailPollTimer);
+      detailPollTimer = null;
+    }
+  };
+
+  const fetchDetail = (url, pushHistory = true) => {
+    fetch(url, { headers: { "X-Requested-With": "gemstar-detail" } })
+      .then((response) => response.text())
+      .then((html) => {
+        replaceDetail(html);
+        if (pushHistory) {
+          const pageUrl = new URL(window.location.href);
+          const detailUrl = new URL(url, window.location.origin);
+          pageUrl.search = detailUrl.search;
+          window.history.pushState({}, "", pageUrl);
+        }
+        const detailUrl = new URL(url, window.location.origin);
+        syncSidebarSelection(detailUrl.searchParams.get("gem"));
+      });
+  };
+
+  const activateGemLink = (link, pushHistory = true, keepVisible = false) => {
+    if (!link) return;
+
+    syncSidebarSelection(link.dataset.gemName, keepVisible);
+    fetchDetail(link.dataset.detailUrl || link.href, pushHistory);
+
+    if (sidebarPanel) {
+      sidebarPanel.focus({ preventScroll: true });
+    }
+  };
+
+  const scheduleDetailPoll = () => {
+    stopDetailPoll();
+    if (!detailPanel || detailPanel.dataset.detailPending !== "true") return;
+    detailPollTimer = setTimeout(() => {
+      fetchDetail(detailPanel.dataset.detailUrl, false);
+    }, 1000);
+  };
+
+  if (detailPanel) {
+    detailPanel.scrollTop = 0;
+    scheduleDetailPoll();
+  }
+
+  syncSidebarSelection(null, true);
+  applyGemFilter(currentFilter);
+
+  gemLinks.forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      activateGemLink(link);
+    });
+  });
+
+  filterButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      applyGemFilter(button.dataset.filterButton);
+      if (sidebarPanel) {
+        sidebarPanel.scrollTop = 0;
+      }
+      syncSidebarSelection(null, true);
+    });
+  });
+
+  const navigate = (params) => {
+    const url = new URL(window.location.href);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === null || value === undefined || value === "") {
+        url.searchParams.delete(key);
+      } else {
+        url.searchParams.set(key, value);
+      }
+    });
+    window.location.href = url.toString();
+  };
+
+  if (projectSelect) {
+    projectSelect.addEventListener("change", (event) => {
+      if (event.target.value === "__add__") {
+        window.alert("Add project UI is next. For now, restart gemstar server with another --project path.");
+        event.target.value = "<%= selected_project_index %>";
+        return;
+      }
+      navigate({ project: event.target.value, from: null, to: "worktree", gem: null });
+    });
+  }
+
+  if (fromSelect) {
+    fromSelect.addEventListener("change", (event) => {
+      navigate({ from: event.target.value, gem: null });
+    });
+  }
+
+  if (toSelect) {
+    toSelect.addEventListener("change", (event) => {
+      navigate({ to: event.target.value, gem: null });
+    });
+  }
+
+  document.addEventListener("keydown", (event) => {
+    const tagName = document.activeElement && document.activeElement.tagName;
+    if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") return;
+    const links = visibleGemLinks();
+    if (!links.length) return;
+
+    const selectedGem = currentSelectedIndex();
+    const currentIndex = selectedGem >= 0 ? selectedGem : 0;
+    let nextIndex = null;
+
+    if (event.key === "ArrowDown") nextIndex = Math.min(currentIndex + 1, links.length - 1);
+    if (event.key === "ArrowUp") nextIndex = Math.max(currentIndex - 1, 0);
+
+    if (nextIndex !== null && nextIndex !== currentIndex) {
+      event.preventDefault();
+      activateGemLink(links[nextIndex], true, true);
+    }
+  });
+
+  window.addEventListener("popstate", () => {
+    window.location.reload();
+  });
+})();

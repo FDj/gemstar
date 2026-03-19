@@ -1,4 +1,5 @@
 require "cgi"
+require "erb"
 require "uri"
 require "kramdown"
 require "roda"
@@ -26,6 +27,7 @@ module Gemstar
         @config_home = self.class.opts.fetch(:config_home)
         @cache_warmer = self.class.opts[:cache_warmer]
         @metadata_cache = {}
+        apply_no_cache_headers!
 
         r.root do
           load_state(r.params)
@@ -49,6 +51,12 @@ module Gemstar
 
       private
 
+      def apply_no_cache_headers!
+        response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+      end
+
       def page_title
         return "Gemstar" unless @selected_project
 
@@ -59,8 +67,9 @@ module Gemstar
         @selected_project_index = selected_project_index(params["project"])
         @selected_project = @projects[@selected_project_index]
         @revision_options = @selected_project ? @selected_project.revision_options : []
-        @selected_from_revision_id = selected_from_revision_id(params["from"])
         @selected_to_revision_id = selected_to_revision_id(params["to"])
+        @selected_from_revision_id = selected_from_revision_id(params["from"])
+        @selected_to_revision_id = selected_to_revision_id(@selected_to_revision_id)
         @gem_states = @selected_project ? @selected_project.gem_states(from_revision_id: @selected_from_revision_id, to_revision_id: @selected_to_revision_id) : []
         @selected_gem = selected_gem_state(params["gem"])
       end
@@ -84,8 +93,8 @@ module Gemstar
       def selected_from_revision_id(raw_revision_id)
         return "worktree" unless @selected_project
 
-        valid_ids = @revision_options.map { |option| option[:id] }
-        default_id = @selected_project.default_from_revision_id
+        valid_ids = valid_from_revision_ids
+        default_id = default_from_revision_id_for(@selected_to_revision_id)
         candidate = raw_revision_id.nil? || raw_revision_id.empty? ? default_id : raw_revision_id
 
         valid_ids.include?(candidate) ? candidate : default_id
@@ -94,10 +103,10 @@ module Gemstar
       def selected_to_revision_id(raw_revision_id)
         return "worktree" unless @selected_project
 
-        valid_ids = @revision_options.map { |option| option[:id] }
+        valid_ids = valid_to_revision_ids
         candidate = raw_revision_id.nil? || raw_revision_id.empty? ? "worktree" : raw_revision_id
 
-        valid_ids.include?(candidate) ? candidate : "worktree"
+        valid_ids.include?(candidate) ? candidate : valid_ids.first || "worktree"
       end
 
       def selected_gem_state(raw_gem_name)
@@ -128,7 +137,7 @@ module Gemstar
                 <div class="brand-mark">G</div>
                 <div>
                   <p class="brand-kicker">Gemstar</p>
-                  <h1>Gemfile.lock explorer</h1>
+                  <h1>Gemstar</h1>
                 </div>
               </div>
             </header>
@@ -146,7 +155,7 @@ module Gemstar
           <header class="topbar">
             <div class="brand-lockup">
               <div class="brand-mark">G</div>
-              <h1>Gemfile.lock explorer</h1>
+              <h1>Gemstar</h1>
             </div>
             <div class="picker-row">
               <label class="picker picker-project">
@@ -158,13 +167,13 @@ module Gemstar
                 </select>
               </label>
               <label class="picker">
-                <span class="picker-prefix">From:</span>
+                <span class="picker-prefix" data-text-label="true">From:</span>
                 <select data-from-select #{'disabled="disabled"' unless @selected_project}>
                   #{from_revision_options_html}
                 </select>
               </label>
               <label class="picker">
-                <span class="picker-prefix">To:</span>
+                <span class="picker-prefix" data-text-label="true">To:</span>
                 <select data-to-select #{'disabled="disabled"' unless @selected_project}>
                   #{to_revision_options_html}
                 </select>
@@ -188,8 +197,9 @@ module Gemstar
 
         @revision_options.map do |option|
           selected = option[:id] == @selected_from_revision_id ? ' selected="selected"' : ""
+          disabled = valid_from_revision_ids.include?(option[:id]) ? "" : ' disabled="disabled"'
           <<~HTML
-            <option value="#{h(option[:id])}"#{selected}>#{h(option[:label])} · #{h(option[:description])}</option>
+            <option value="#{h(option[:id])}"#{selected}#{disabled}>#{h(option[:label])} · #{h(option[:description])}</option>
           HTML
         end.join
       end
@@ -199,10 +209,43 @@ module Gemstar
 
         @revision_options.map do |option|
           selected = option[:id] == @selected_to_revision_id ? ' selected="selected"' : ""
+          disabled = valid_to_revision_ids.include?(option[:id]) ? "" : ' disabled="disabled"'
           <<~HTML
-            <option value="#{h(option[:id])}"#{selected}>#{h(option[:label])} · #{h(option[:description])}</option>
+            <option value="#{h(option[:id])}"#{selected}#{disabled}>#{h(option[:label])} · #{h(option[:description])}</option>
           HTML
         end.join
+      end
+
+      def revision_option_index(revision_id)
+        @revision_options.index { |option| option[:id] == revision_id }
+      end
+
+      def valid_from_revision_ids
+        return [] unless @selected_project
+
+        to_index = revision_option_index(@selected_to_revision_id) || 0
+        @revision_options.filter_map.with_index do |option, index|
+          option[:id] if index > to_index
+        end
+      end
+
+      def valid_to_revision_ids
+        return [] unless @selected_project
+        return @revision_options.map { |option| option[:id] } unless @selected_from_revision_id
+
+        from_index = revision_option_index(@selected_from_revision_id)
+        return @revision_options.map { |option| option[:id] } if from_index.nil?
+
+        @revision_options.filter_map.with_index do |option, index|
+          option[:id] if index < from_index
+        end
+      end
+
+      def default_from_revision_id_for(to_revision_id)
+        default_id = @selected_project.default_from_revision_id
+        return default_id if valid_from_revision_ids.include?(default_id)
+
+        valid_from_revision_ids.first || default_id
       end
 
       def render_workspace
@@ -220,16 +263,14 @@ module Gemstar
       def render_toolbar
         <<~HTML
           <section class="toolbar">
-            <div class="toolbar-actions">
-              <button type="button" class="action" disabled="disabled">bundle install</button>
-              <button type="button" class="action action-primary" disabled="disabled">bundle update</button>
-            </div>
             <div class="toolbar-meta">
               <strong>#{@gem_states.count}</strong> gems
               <span>·</span>
               <strong>#{@gem_states.count { |gem| gem[:status] != :unchanged }}</strong> changes from #{h(selected_from_revision_label)} to #{h(selected_to_revision_label)}
-              <span>·</span>
-              keyboard: arrows
+            </div>
+            <div class="toolbar-actions">
+              <button type="button" class="action" disabled="disabled">bundle install</button>
+              <button type="button" class="action action-primary" disabled="disabled">bundle update</button>
             </div>
           </section>
         HTML
@@ -247,14 +288,13 @@ module Gemstar
         <<~HTML
           <aside class="sidebar" data-sidebar-panel tabindex="0">
             <div class="sidebar-header">
-              <h2>#{h(@selected_project.name)}</h2>
+              <h2>Gems</h2>
               <div class="list-filters" data-list-filters>
                 <button type="button" class="list-filter-button is-active" data-filter-button="updated">Updated</button>
                 <button type="button" class="list-filter-button" data-filter-button="all">All</button>
               </div>
             </div>
             #{render_gem_list}
-            <button type="button" class="add-gem" disabled="disabled">Add gem</button>
           </aside>
         HTML
       end
@@ -268,15 +308,18 @@ module Gemstar
 
         items = @gem_states.map do |gem|
           selected = gem[:name] == @selected_gem[:name] ? " is-selected" : ""
+          status_class = " status-#{gem[:status]}"
           updated = gem[:status] != :unchanged
+          hidden = updated ? "" : ' hidden="hidden"'
           <<~HTML
             <a
-              class="gem-row#{selected}"
+              class="gem-row#{selected}#{status_class}"
               href="#{project_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, gem: gem[:name])}"
               data-gem-link="true"
               data-gem-name="#{h(gem[:name])}"
               data-gem-updated="#{updated}"
               data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, gem: gem[:name]))}"
+              #{hidden}
             >
               <span class="gem-name-row">
                 <span class="gem-name">#{h(gem[:name])}</span>
@@ -291,18 +334,14 @@ module Gemstar
           <nav class="gem-list">
             #{items}
           </nav>
+          <section class="empty-panel gem-list-empty" data-gem-list-empty hidden="hidden">
+            <p>No updated gems in this revision range.</p>
+          </section>
         HTML
       end
 
       def render_detail
-        return <<~HTML unless @selected_gem
-          <section class="detail" data-detail-panel>
-            <div class="empty-panel">
-              <h2>No gem selected</h2>
-              <p>Choose a gem from the list to inspect its current version and changelog revisions.</p>
-            </div>
-          </section>
-        HTML
+        return empty_detail_html unless @selected_gem
 
         metadata = metadata_for(@selected_gem[:name])
         detail_pending = detail_pending?(@selected_gem[:name], metadata)
@@ -310,33 +349,68 @@ module Gemstar
         <<~HTML
           <section class="detail" data-detail-panel data-detail-pending="#{detail_pending}" data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, gem: @selected_gem[:name]))}">
             #{render_detail_hero(metadata)}
-            #{render_detail_links(metadata)}
             #{render_detail_loading_notice if detail_pending}
             #{render_detail_revision_panel}
           </section>
         HTML
       end
 
-      def render_detail_hero(metadata)
-        summary = if @selected_gem[:old_version] == @selected_gem[:new_version]
-          @selected_gem[:new_version].to_s
-        else
-          @selected_gem[:version_label]
-        end
+      def empty_detail_html
+        <<~HTML
+          <section class="detail" data-detail-panel>
+            <div class="empty-panel">
+              <h2>No gem selected</h2>
+              <p>Choose a gem from the list to inspect its current version and changelog revisions.</p>
+            </div>
+          </section>
+        HTML
+      end
 
+      def render_detail_hero(metadata)
         description = metadata&.dig("info")
+        origin_labels = Array(@selected_gem[:bundle_origin_labels])
+        bundled_version = @selected_gem[:new_version] || @selected_gem[:old_version]
+        title_url = metadata&.dig("homepage_uri")
+        title_url = Gemstar::RubyGemsMetadata.new(@selected_gem[:name]).repo_uri(cache_only: true) if title_url.to_s.empty?
+        title_markup = if title_url.to_s.empty?
+          h(@selected_gem[:name])
+        else
+          %(<a href="#{h(title_url)}" target="_blank" rel="noreferrer">#{h(@selected_gem[:name])}</a>)
+        end
 
         <<~HTML
           <section class="detail-hero">
-            <div>
-              <h2>#{h(@selected_gem[:name])}</h2>
-              <p class="version-summary">#{h(summary)}</p>
+            <div class="detail-hero-copy">
+              <div class="detail-title-row">
+                <h2>#{title_markup}</h2>
+                #{render_detail_links(metadata)}
+              </div>
+              <p class="detail-subtitle">#{description ? h(description) : "Metadata will appear here when RubyGems information is available."}</p>
+              #{bundled_version ? %(<p class="detail-origin"><strong>Bundled version:</strong> #{h(bundled_version)}</p>) : ""}
+              #{render_dependency_origins(origin_labels)}
             </div>
           </section>
-          <section class="detail-copy">
-            <p>#{description ? h(description) : "Metadata will appear here when RubyGems information is available."}</p>
-          </section>
         HTML
+      end
+
+      def render_dependency_origins(origin_labels)
+        return "" if origin_labels.empty?
+
+        if origin_labels.length == 1
+          <<~HTML
+            <p class="detail-origin"><strong>Dependency:</strong> #{h(origin_labels.first)}</p>
+          HTML
+        else
+          items = origin_labels.map { |label| "<li>#{h(label)}</li>" }.join
+          <<~HTML
+            <div class="detail-origin">
+              <strong>Dependencies</strong>
+              <ul class="detail-origin-list">
+                #{items}
+              </ul>
+            </div>
+          HTML
+        end
       end
 
       def render_detail_links(metadata)
@@ -345,9 +419,9 @@ module Gemstar
         rubygems_url = "https://rubygems.org/gems/#{URI.encode_www_form_component(@selected_gem[:name])}"
 
         buttons = []
-        buttons << external_button("RubyGems", rubygems_url)
-        buttons << external_button("GitHub", repo_url) if repo_url && !repo_url.empty?
-        buttons << external_button("Homepage", homepage_url) if homepage_url && !homepage_url.empty?
+        buttons << icon_button("RubyGems", rubygems_url, icon_type: :rubygems)
+        buttons << icon_button("GitHub", repo_url, icon_type: :github) if repo_url && !repo_url.empty?
+        buttons << icon_button("Homepage", homepage_url, icon_type: :home) if homepage_url && !homepage_url.empty?
 
         <<~HTML
           <section class="link-strip">
@@ -361,15 +435,9 @@ module Gemstar
 
         <<~HTML
           <section class="revision-panel">
-            <div class="panel-heading">
-              <div>
-                <h3>Revisions for #{@selected_gem[:name]}</h3>
-              </div>
-              <div class="panel-heading-meta">#{h(selected_from_revision_label)} -> #{h(selected_to_revision_label)}</div>
-            </div>
-            #{render_revision_group("Latest", groups[:latest], empty_message: "No newer changelog entries found yet.")}
-            #{render_revision_group("New in this revision", groups[:current], empty_message: "No changelog entries matched this revision range.")}
-            #{render_revision_group("Previous updates", groups[:previous], empty_message: "No older changelog entries found.")}
+            #{render_revision_group("Latest", groups[:latest], empty_message: nil) if groups[:latest].any?}
+            #{render_revision_group(current_section_title, groups[:current], empty_message: "No changelog entries matched this revision range.")}
+            #{render_revision_group("Previous changes", groups[:previous], empty_message: nil) if groups[:previous].any?}
           </section>
         HTML
       end
@@ -384,6 +452,8 @@ module Gemstar
 
       def render_revision_group(title, sections, empty_message:)
         cards = if sections.empty?
+          return "" unless empty_message
+
           <<~HTML
             <div class="empty-panel">
               <p>#{h(empty_message)}</p>
@@ -404,11 +474,17 @@ module Gemstar
       end
 
       def render_revision_card(section)
+        title_links = revision_card_links(section)
+        status_class = @selected_gem ? " status-#{@selected_gem[:status]}" : ""
+
         <<~HTML
-          <article class="revision-card revision-#{section[:kind]}">
+          <article class="revision-card revision-#{section[:kind]}#{status_class}">
             <header class="revision-card-header">
-              <div>
-                <h5>#{h(section[:version])}</h5>
+              <div class="revision-card-titlebar">
+                <h5>#{h(section[:title] || section[:version])}</h5>
+                <div class="revision-card-actions">
+                  #{title_links.join}
+                </div>
               </div>
             </header>
             <div class="revision-markup">
@@ -441,11 +517,14 @@ module Gemstar
         rendered_sections = sections.keys.filter_map do |version|
           kind = section_kind(version, previous_version, current_version, gem_state[:status])
           next unless kind
+          content = changelog_content(sections[version], heading_version: version)
 
           {
             version: version,
+            title: content[:title],
             kind: kind,
-            html: changelog_markup(sections[version])
+            previous_version: previous_section_version(sections.keys, version),
+            html: content[:html]
           }
         end
 
@@ -456,6 +535,7 @@ module Gemstar
 
       def section_kind(version, previous_version, current_version, status)
         return :future if compare_versions(version, current_version) == 1
+        return :current if status == :added && compare_versions(version, current_version) <= 0
 
         lower_bound = previous_version || current_version
         if compare_versions(version, lower_bound) == 1 && compare_versions(version, current_version) <= 0
@@ -469,8 +549,6 @@ module Gemstar
           return :current if compare_versions(version, lower_bound) == 1 &&
             compare_versions(version, upper_bound) <= 0
         end
-
-        return :current if previous_version.nil? && compare_versions(version, current_version) <= 0 && compare_versions(version, current_version) >= 0
 
         :previous if compare_versions(version, lower_bound) <= 0
       end
@@ -488,16 +566,36 @@ module Gemstar
         0
       end
 
-      def changelog_markup(lines)
+      def changelog_content(lines, heading_version: nil)
         text = Array(lines).flatten.join
-        return "<p>No changelog text available.</p>" if text.strip.empty?
+        return { title: heading_version.to_s, html: "<p>No changelog text available.</p>" } if text.strip.empty?
+
+        if heading_version
+          text = text.sub(/\A\s*#+\s*v?#{Regexp.escape(heading_version)}\s*\n+/i, "")
+        end
 
         options = { hard_wrap: false }
         options[:input] = "GFM" if defined?(Kramdown::Parser::GFM)
         html = Kramdown::Document.new(text, options).to_html
-        with_external_links(html)
+        extract_card_title(with_external_links(html), fallback_title: heading_version.to_s, version: heading_version.to_s)
       rescue Kramdown::Error
-        "<pre>#{h(text)}</pre>"
+        { title: heading_version.to_s, html: "<pre>#{h(text)}</pre>" }
+      end
+
+      def extract_card_title(html, fallback_title:, version:)
+        fragment = Nokogiri::HTML::DocumentFragment.parse(html)
+        first_heading = fragment.at_css("h1, h2, h3, h4, h5, h6")
+        title = fallback_title
+
+        if first_heading
+          heading_text = first_heading.text.to_s.strip
+          if heading_text.include?(version.to_s)
+            title = heading_text
+            first_heading.remove
+          end
+        end
+
+        { title: title, html: fragment.to_html }
       end
 
       def compare_versions(left, right)
@@ -516,10 +614,82 @@ module Gemstar
         metadata.nil? && change_sections({ name: gem_name, old_version: @selected_gem[:old_version], new_version: @selected_gem[:new_version], status: @selected_gem[:status] }).empty?
       end
 
-      def external_button(label, url)
+      def icon_button(label, url, icon_type:)
         <<~HTML
-          <a class="link-button" href="#{h(url)}" target="_blank" rel="noreferrer">#{h(label)}</a>
+          <a class="link-button icon-button" href="#{h(url)}" target="_blank" rel="noreferrer" aria-label="#{h(label)}" title="#{h(label)}">
+            #{icon_svg(icon_type)}
+          </a>
         HTML
+      end
+
+      def icon_svg(icon_type)
+        case icon_type
+        when :github
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.67 0 8.2c0 3.63 2.29 6.7 5.47 7.78.4.08.55-.18.55-.4 0-.2-.01-.86-.01-1.56-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.97-.81-1.17-.27-.15-.66-.52-.01-.53.61-.01 1.04.58 1.18.82.7 1.2 1.82.86 2.27.66.07-.52.27-.86.49-1.06-1.78-.21-3.64-.92-3.64-4.07 0-.9.31-1.64.82-2.22-.08-.21-.36-1.06.08-2.21 0 0 .67-.22 2.2.85a7.36 7.36 0 0 1 4 0c1.53-1.07 2.2-.85 2.2-.85.44 1.15.16 2 .08 2.21.51.58.82 1.31.82 2.22 0 3.16-1.87 3.86-3.65 4.07.28.25.53.73.53 1.48 0 1.07-.01 1.94-.01 2.2 0 .22.15.49.55.4A8.24 8.24 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"/></svg>'
+        when :home
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 .8 1.2 6.3v8.9h4.3V10h5v5.2h4.3V6.3L8 .8Zm5.2 13.3h-1.8V8.9H4.6v5.2H2.8V6.8L8 2.6l5.2 4.2v7.3Z"/></svg>'
+        when :rubygems
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="2.6" fill="#fff"/><path fill="#111" d="m8 2.35 4.55 2.63v5.24L8 12.85l-4.55-2.63V4.98L8 2.35Zm0 1.3L4.58 5.62v3.96L8 11.55l3.42-1.97V5.62L8 3.65Zm0 1.07 2.5 1.44v2.88L8 10.48 5.5 9.04V6.16L8 4.72Z"/></svg>'
+        else
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="2.6" fill="#fff"/><path fill="#111" d="m8 2.35 4.55 2.63v5.24L8 12.85l-4.55-2.63V4.98L8 2.35Zm0 1.3L4.58 5.62v3.96L8 11.55l3.42-1.97V5.62L8 3.65Zm0 1.07 2.5 1.44v2.88L8 10.48 5.5 9.04V6.16L8 4.72Z"/></svg>'
+        end
+      end
+
+      def current_section_title
+        if @selected_to_revision_id == "worktree"
+          "Worktree changes since #{selected_from_revision_label}"
+        else
+          "Changes from #{selected_from_revision_label} to #{selected_to_revision_label}"
+        end
+      end
+
+      def range_label(gem_state)
+        old_version = gem_state[:old_version]
+        new_version = gem_state[:new_version]
+        return new_version.to_s if old_version == new_version
+        return "new-#{new_version}" if old_version.nil? && new_version
+        return "#{old_version}-removed" if old_version && new_version.nil?
+
+        "#{old_version}-#{new_version}"
+      end
+
+      def previous_section_version(versions, current_version)
+        ordered_versions = versions.sort_by { |version| -sortable_version_number(version) }
+        current_index = ordered_versions.index(current_version)
+        return nil if current_index.nil?
+
+        ordered_versions[current_index + 1]
+      end
+
+      def revision_card_links(section)
+        repo_url = Gemstar::RubyGemsMetadata.new(@selected_gem[:name]).repo_uri(cache_only: true)
+        return [] if repo_url.to_s.empty?
+
+        links = []
+        compare_url = github_compare_url(repo_url, section[:previous_version], section[:version])
+        links << icon_button("Git diff", compare_url, icon_type: :github) if compare_url
+
+        release_url = github_release_url(repo_url, section[:version])
+        links << icon_button("Release", release_url, icon_type: :github) if release_url && compare_url.nil?
+        links
+      end
+
+      def github_compare_url(repo_url, previous_version, current_version)
+        return nil unless repo_url.include?("github.com")
+        return nil if previous_version.nil? || current_version.nil?
+
+        "#{repo_url}/compare/#{github_tag_name(previous_version)}...#{github_tag_name(current_version)}"
+      end
+
+      def github_release_url(repo_url, version)
+        return nil unless repo_url.include?("github.com")
+        return nil if version.nil?
+
+        "#{repo_url}/releases/tag/#{github_tag_name(version)}"
+      end
+
+      def github_tag_name(version)
+        version.to_s.start_with?("v") ? version.to_s : "v#{version}"
       end
 
       def with_external_links(html)
@@ -549,585 +719,50 @@ module Gemstar
       end
 
       def render_page(title)
-        <<~HTML
-          <!DOCTYPE html>
-          <html lang="en">
-            <head>
-              <meta charset="utf-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1">
-              <title>#{h(title)}</title>
-              <style>
-                :root {
-                  color-scheme: light;
-                  --canvas: #f1ecdf;
-                  --panel: #fff9ef;
-                  --panel-strong: #f7efe0;
-                  --ink: #1f1b17;
-                  --muted: #6b6057;
-                  --line: #ddcfbf;
-                  --accent: #b44d25;
-                  --accent-soft: rgba(180, 77, 37, 0.14);
-                  --green: #2f8f5b;
-                  --green-soft: rgba(47, 143, 91, 0.12);
-                  --red: #a9473c;
-                  --red-soft: rgba(169, 71, 60, 0.12);
-                  --grey: #7c7c85;
-                  --grey-soft: rgba(124, 124, 133, 0.1);
-                  --shadow: 0 1.1rem 2.4rem rgba(66, 44, 28, 0.08);
-                }
+        render_template(
+          "page.html.erb",
+          title: h(title),
+          favicon_data_uri: favicon_data_uri,
+          styles_css: template_source("app.css"),
+          body_html: yield
+        )
+      end
 
-                * { box-sizing: border-box; }
-                body {
-                  margin: 0;
-                  color: var(--ink);
-                  font-family: "Iowan Old Style", "Palatino Linotype", serif;
-                  background: #fff;
-                }
-                a {
-                  color: inherit;
-                  text-decoration: none;
-                }
-                button,
-                select {
-                  font: inherit;
-                }
-                code,
-                pre {
-                  font-family: "SFMono-Regular", "Cascadia Code", monospace;
-                }
-                .app-shell {
-                  min-height: 100vh;
-                  display: flex;
-                  flex-direction: column;
-                }
-                .topbar {
-                  display: flex;
-                  align-items: center;
-                  justify-content: space-between;
-                  gap: 0.6rem;
-                  padding: 0.4rem 0.65rem;
-                  border-bottom: 1px solid #ece8df;
-                  background: #fff;
-                  position: sticky;
-                  top: 0;
-                  z-index: 2;
-                  flex-wrap: nowrap;
-                }
-                .brand-lockup {
-                  display: flex;
-                  align-items: center;
-                  gap: 0.65rem;
-                  flex: 0 1 auto;
-                  min-width: 0;
-                }
-                .brand-mark {
-                  width: 1.55rem;
-                  height: 1.55rem;
-                  border-radius: 0.35rem;
-                  display: grid;
-                  place-items: center;
-                  font-weight: 700;
-                  font-size: 0.82rem;
-                  color: white;
-                  background: linear-gradient(145deg, #c05a2b, #8f3517);
-                }
-                .brand-kicker,
-                .detail-kicker {
-                  margin: 0;
-                  color: var(--accent);
-                  text-transform: uppercase;
-                  letter-spacing: 0.1em;
-                  font-size: 0.65rem;
-                }
-                .brand-lockup h1,
-                .sidebar-header h2,
-                .detail h2,
-                .detail h3,
-                .empty-state h2 {
-                  margin: 0.05rem 0 0;
-                  line-height: 1;
-                }
-                .brand-lockup h1 {
-                  white-space: nowrap;
-                  font-size: 0.96rem;
-                }
-                .picker-row {
-                  display: flex;
-                  gap: 0.45rem;
-                  flex-wrap: nowrap;
-                  align-items: center;
-                  flex: 1 1 auto;
-                  justify-content: flex-end;
-                  min-width: 0;
-                }
-                .picker {
-                  display: inline-flex;
-                  align-items: center;
-                  gap: 0.28rem;
-                  color: var(--muted);
-                  font-size: 0.78rem;
-                  min-width: 0;
-                }
-                .picker-prefix {
-                  white-space: nowrap;
-                  color: var(--muted);
-                }
-                .picker select {
-                  min-width: 10rem;
-                  max-width: 17rem;
-                  border: 1px solid var(--line);
-                  border-radius: 0.35rem;
-                  padding: 0.24rem 0.45rem;
-                  background: #fff;
-                  color: var(--ink);
-                  box-shadow: none;
-                  font-size: 0.8rem;
-                }
-                .workspace {
-                  display: grid;
-                  gap: 0.45rem;
-                  padding: 0.45rem 0.55rem;
-                }
-                .toolbar,
-                .sidebar,
-                .detail,
-                .empty-state {
-                  background: #fff;
-                  border: 1px solid #ece8df;
-                  border-radius: 0.35rem;
-                  box-shadow: none;
-                }
-                .toolbar {
-                  display: flex;
-                  justify-content: space-between;
-                  gap: 0.45rem;
-                  align-items: center;
-                  padding: 0.35rem 0.5rem;
-                  flex-wrap: wrap;
-                }
-                .toolbar-actions {
-                  display: flex;
-                  gap: 0.3rem;
-                  flex-wrap: wrap;
-                }
-                .action,
-                .add-gem,
-                .link-button {
-                  border: 1px solid var(--line);
-                  border-radius: 0.3rem;
-                  padding: 0.22rem 0.5rem;
-                  background: #fff;
-                  color: var(--ink);
-                  font-size: 0.78rem;
-                }
-                .action-primary {
-                  background: linear-gradient(145deg, #c55a28, #984119);
-                  color: white;
-                  border-color: rgba(152, 65, 25, 0.65);
-                }
-                .action[disabled],
-                .add-gem[disabled] {
-                  opacity: 0.55;
-                  cursor: not-allowed;
-                }
-                .toolbar-meta {
-                  color: var(--muted);
-                  display: flex;
-                  gap: 0.28rem;
-                  flex-wrap: wrap;
-                  align-items: center;
-                  font-size: 0.76rem;
-                }
-                .workspace-body {
-                  display: grid;
-                  grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
-                  gap: 0.45rem;
-                  min-height: calc(100vh - 8rem);
-                  height: calc(100vh - 8rem);
-                }
-                .sidebar {
-                  padding: 0.45rem;
-                  display: grid;
-                  gap: 0.3rem;
-                  align-content: start;
-                  min-height: 0;
-                  overflow: auto;
-                }
-                .sidebar-note,
-                .version-summary,
-                .detail-copy p {
-                  margin: 0;
-                  color: var(--muted);
-                }
-                .sidebar-header {
-                  display: flex;
-                  align-items: center;
-                  justify-content: space-between;
-                  gap: 0.5rem;
-                }
-                .list-filters {
-                  display: flex;
-                  gap: 0.28rem;
-                  flex-wrap: wrap;
-                }
-                .list-filter-button {
-                  border: 1px solid var(--line);
-                  border-radius: 999px;
-                  padding: 0.18rem 0.5rem;
-                  background: #fff;
-                  color: var(--muted);
-                  font-size: 0.74rem;
-                }
-                .list-filter-button.is-active {
-                  border-color: rgba(47, 143, 91, 0.4);
-                  background: var(--green-soft);
-                  color: var(--green);
-                }
-                .gem-list {
-                  display: grid;
-                  gap: 0;
-                }
-                .gem-row {
-                  display: grid;
-                  gap: 0.08rem;
-                  padding: 0.38rem 0.2rem;
-                  border-radius: 0;
-                  border: 0;
-                  border-bottom: 1px solid #f0ede6;
-                  background: transparent;
-                  transition: background 120ms ease, color 120ms ease;
-                }
-                .gem-row:hover,
-                .gem-row.is-selected {
-                  background: #faf8f3;
-                }
-                .gem-name {
-                  font-weight: 700;
-                  font-size: 0.9rem;
-                }
-                .gem-name-row {
-                  display: flex;
-                  align-items: center;
-                  justify-content: space-between;
-                  gap: 0.5rem;
-                }
-                .gem-updated-dot {
-                  width: 0.45rem;
-                  height: 0.45rem;
-                  border-radius: 999px;
-                  background: var(--green);
-                  flex: 0 0 auto;
-                }
-                .gem-version {
-                  color: var(--muted);
-                  font-size: 0.76rem;
-                }
-                .detail {
-                  padding: 0.5rem;
-                  display: grid;
-                  gap: 0.45rem;
-                  align-content: start;
-                  min-height: 0;
-                  overflow: auto;
-                }
-                .detail-hero,
-                .panel-heading {
-                  display: flex;
-                  justify-content: space-between;
-                  gap: 0.65rem;
-                  align-items: start;
-                  flex-wrap: wrap;
-                }
-                .panel-heading-meta {
-                  color: var(--muted);
-                  font-size: 0.76rem;
-                }
-                .detail-copy,
-                .revision-panel,
-                .empty-panel {
-                  border: 1px solid #f0ede6;
-                  border-radius: 0.25rem;
-                  background: #fff;
-                  padding: 0.5rem;
-                }
-                .link-strip {
-                  display: flex;
-                  gap: 0.3rem;
-                  flex-wrap: wrap;
-                }
-                .revision-panel {
-                  display: grid;
-                  gap: 0.4rem;
-                }
-                .revision-group {
-                  display: grid;
-                  gap: 0.3rem;
-                }
-                .revision-group-header h4 {
-                  margin: 0;
-                  font-size: 0.92rem;
-                }
-                .revision-card {
-                  border-radius: 0.2rem;
-                  padding: 0.5rem;
-                  border: 1px solid #f0ede6;
-                  background: #fff;
-                }
-                .revision-future {
-                  border-style: dashed;
-                  border-color: rgba(124, 124, 133, 0.55);
-                  background: linear-gradient(180deg, rgba(124, 124, 133, 0.07), rgba(255,255,255,0.45));
-                }
-                .revision-current {
-                  border-color: rgba(180, 77, 37, 0.25);
-                }
-                .revision-card-header {
-                  display: flex;
-                  align-items: start;
-                  justify-content: space-between;
-                  gap: 0.4rem;
-                  margin-bottom: 0.3rem;
-                }
-                .revision-card h5 {
-                  margin: 0;
-                  font-size: 1rem;
-                }
-                .revision-markup > :first-child {
-                  margin-top: 0;
-                }
-                .revision-markup > :last-child {
-                  margin-bottom: 0;
-                }
-                .empty-state,
-                .empty-panel {
-                  padding: 0.6rem;
-                }
-                @media (max-width: 980px) {
-                  .topbar {
-                    align-items: start;
-                    flex-direction: column;
-                    flex-wrap: wrap;
-                  }
-                  .brand-lockup h1 {
-                    white-space: normal;
-                  }
-                  .picker-row {
-                    width: 100%;
-                    justify-content: stretch;
-                    flex-wrap: wrap;
-                  }
-                  .picker {
-                    width: 100%;
-                    justify-content: space-between;
-                  }
-                  .picker select {
-                    min-width: 0;
-                    width: 100%;
-                    max-width: none;
-                  }
-                  .workspace-body {
-                    grid-template-columns: 1fr;
-                    min-height: 0;
-                    height: auto;
-                  }
-                  .sidebar,
-                  .detail {
-                    overflow: visible;
-                  }
-                }
-              </style>
-            </head>
-            <body>
-              #{yield}
-            </body>
-          </html>
-        HTML
+      def favicon_data_uri
+        svg = <<~SVG
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+            <rect width="64" height="64" rx="14" fill="#b44d25"/>
+            <text x="32" y="44" text-anchor="middle" font-family="Avenir Next, Helvetica Neue, Segoe UI, sans-serif" font-size="34" font-weight="700" fill="#ffffff">G</text>
+          </svg>
+        SVG
+
+        "data:image/svg+xml,#{URI.encode_www_form_component(svg)}"
       end
 
       def render_behavior_script
+        script = render_template(
+          "app.js.erb",
+          empty_detail_html_json: empty_detail_html.dump,
+          selected_project_index: @selected_project_index || 0
+        )
+
         <<~HTML
           <script>
-            (() => {
-              const projectSelect = document.querySelector("[data-project-select]");
-              const fromSelect = document.querySelector("[data-from-select]");
-              const toSelect = document.querySelector("[data-to-select]");
-              const sidebarPanel = document.querySelector("[data-sidebar-panel]");
-              const filterButtons = Array.from(document.querySelectorAll("[data-filter-button]"));
-              let detailPanel = document.querySelector("[data-detail-panel]");
-              const gemLinks = Array.from(document.querySelectorAll("[data-gem-link]"));
-              let detailPollTimer = null;
-              let currentFilter = "updated";
-
-              const visibleGemLinks = () => gemLinks.filter((link) => !link.hidden);
-              const currentSelectedIndex = () => visibleGemLinks().findIndex((link) => link.classList.contains("is-selected"));
-
-              const applyGemFilter = (filter) => {
-                currentFilter = filter;
-
-                filterButtons.forEach((button) => {
-                  button.classList.toggle("is-active", button.dataset.filterButton === filter);
-                });
-
-                gemLinks.forEach((link) => {
-                  const updated = link.dataset.gemUpdated === "true";
-                  link.hidden = filter === "updated" && !updated;
-                });
-              };
-
-              const syncSidebarSelection = (gemName = null, keepVisible = false) => {
-                const effectiveGemName = gemName || new URL(window.location.href).searchParams.get("gem");
-                if (!effectiveGemName) return;
-
-                let selectedLink = null;
-                gemLinks.forEach((link) => {
-                  const matches = link.dataset.gemName === effectiveGemName;
-                  link.classList.toggle("is-selected", matches);
-                  if (matches) {
-                    selectedLink = link;
-                  }
-                });
-
-                if (keepVisible && sidebarPanel && selectedLink) {
-                  selectedLink.scrollIntoView({ block: "nearest" });
-                }
-              };
-
-              if ("scrollRestoration" in history) {
-                history.scrollRestoration = "manual";
-              }
-
-              const replaceDetail = (html) => {
-                if (!detailPanel) return;
-                detailPanel.outerHTML = html;
-                detailPanel = document.querySelector("[data-detail-panel]");
-                if (detailPanel) detailPanel.scrollTop = 0;
-                scheduleDetailPoll();
-              };
-
-              const stopDetailPoll = () => {
-                if (detailPollTimer) {
-                  clearTimeout(detailPollTimer);
-                  detailPollTimer = null;
-                }
-              };
-
-              const fetchDetail = (url, pushHistory = true) => {
-                fetch(url, { headers: { "X-Requested-With": "gemstar-detail" } })
-                  .then((response) => response.text())
-                  .then((html) => {
-                    replaceDetail(html);
-                    if (pushHistory) {
-                      const pageUrl = new URL(window.location.href);
-                      const detailUrl = new URL(url, window.location.origin);
-                      pageUrl.search = detailUrl.search;
-                      window.history.pushState({}, "", pageUrl);
-                    }
-                    const detailUrl = new URL(url, window.location.origin);
-                    syncSidebarSelection(detailUrl.searchParams.get("gem"));
-                  });
-              };
-
-              const activateGemLink = (link, pushHistory = true, keepVisible = false) => {
-                if (!link) return;
-
-                syncSidebarSelection(link.dataset.gemName, keepVisible);
-                fetchDetail(link.dataset.detailUrl || link.href, pushHistory);
-
-                if (sidebarPanel) {
-                  sidebarPanel.focus({ preventScroll: true });
-                }
-              };
-
-              const scheduleDetailPoll = () => {
-                stopDetailPoll();
-                if (!detailPanel || detailPanel.dataset.detailPending !== "true") return;
-                detailPollTimer = setTimeout(() => {
-                  fetchDetail(detailPanel.dataset.detailUrl, false);
-                }, 1000);
-              };
-
-              if (detailPanel) {
-                detailPanel.scrollTop = 0;
-                scheduleDetailPoll();
-              }
-
-              syncSidebarSelection(null, true);
-              applyGemFilter(currentFilter);
-
-              gemLinks.forEach((link) => {
-                link.addEventListener("click", (event) => {
-                  event.preventDefault();
-                  activateGemLink(link);
-                });
-              });
-
-              filterButtons.forEach((button) => {
-                button.addEventListener("click", () => {
-                  applyGemFilter(button.dataset.filterButton);
-                  syncSidebarSelection(null, true);
-                });
-              });
-
-              const navigate = (params) => {
-                const url = new URL(window.location.href);
-                Object.entries(params).forEach(([key, value]) => {
-                  if (value === null || value === undefined || value === "") {
-                    url.searchParams.delete(key);
-                  } else {
-                    url.searchParams.set(key, value);
-                  }
-                });
-                window.location.href = url.toString();
-              };
-
-              if (projectSelect) {
-                projectSelect.addEventListener("change", (event) => {
-                  if (event.target.value === "__add__") {
-                    window.alert("Add project UI is next. For now, restart gemstar server with another --project path.");
-                    event.target.value = "#{@selected_project_index || 0}";
-                    return;
-                  }
-                  navigate({ project: event.target.value, from: null, to: "worktree", gem: null });
-                });
-              }
-
-              if (fromSelect) {
-                fromSelect.addEventListener("change", (event) => {
-                  navigate({ from: event.target.value, gem: null });
-                });
-              }
-
-              if (toSelect) {
-                toSelect.addEventListener("change", (event) => {
-                  navigate({ to: event.target.value, gem: null });
-                });
-              }
-
-              document.addEventListener("keydown", (event) => {
-                const tagName = document.activeElement && document.activeElement.tagName;
-                if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") return;
-                const links = visibleGemLinks();
-                if (!links.length) return;
-
-                const selectedGem = currentSelectedIndex();
-                const currentIndex = selectedGem >= 0 ? selectedGem : 0;
-                let nextIndex = null;
-
-                if (event.key === "ArrowDown") nextIndex = Math.min(currentIndex + 1, links.length - 1);
-                if (event.key === "ArrowUp") nextIndex = Math.max(currentIndex - 1, 0);
-
-                if (nextIndex !== null && nextIndex !== currentIndex) {
-                  event.preventDefault();
-                  activateGemLink(links[nextIndex], true, true);
-                }
-              });
-
-              window.addEventListener("popstate", () => {
-                window.location.reload();
-              });
-            })();
+#{script}
           </script>
         HTML
+      end
+
+      def template_source(name)
+        File.read(template_path(name))
+      end
+
+      def render_template(name, locals = {})
+        ERB.new(template_source(name), trim_mode: "-").result_with_hash(locals)
+      end
+
+      def template_path(name)
+        File.expand_path(File.join("templates", name), __dir__)
       end
 
       def h(value)

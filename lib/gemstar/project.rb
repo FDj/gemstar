@@ -67,7 +67,7 @@ module Gemstar
     end
 
     def default_from_revision_id
-      lockfile_revision_history(limit: 1).first&.dig(:id) ||
+      default_changed_lockfile_revision_id ||
         gemfile_revision_history(limit: 1).first&.dig(:id) ||
         "worktree"
     end
@@ -97,26 +97,40 @@ module Gemstar
     end
 
     def gem_states(from_revision_id: default_from_revision_id, to_revision_id: "worktree")
-      from_specs = lockfile_for_revision(from_revision_id)&.specs || {}
-      to_specs = lockfile_for_revision(to_revision_id)&.specs || {}
+      from_lockfile = lockfile_for_revision(from_revision_id)
+      to_lockfile = lockfile_for_revision(to_revision_id)
+      from_specs = from_lockfile&.specs || {}
+      to_specs = to_lockfile&.specs || {}
 
       (from_specs.keys | to_specs.keys).map do |gem_name|
         old_version = from_specs[gem_name]
         new_version = to_specs[gem_name]
+        bundle_origins = to_lockfile&.origins_for(gem_name) || []
 
         {
           name: gem_name,
           old_version: old_version,
           new_version: new_version,
           status: gem_status(old_version, new_version),
-          version_label: version_label(old_version, new_version)
+          version_label: version_label(old_version, new_version),
+          bundle_origins: bundle_origins,
+          bundle_origin_labels: bundle_origin_labels(bundle_origins)
         }
-      end.sort_by do |gem|
-        [status_rank(gem[:status]), gem[:name]]
-      end
+      end.sort_by { |gem| gem[:name] }
     end
 
     private
+
+    def default_changed_lockfile_revision_id
+      return nil unless lockfile?
+
+      current_specs = current_lockfile&.specs || {}
+
+      lockfile_revision_history(limit: 20).find do |revision|
+        revision_lockfile = lockfile_for_revision(revision[:id])
+        revision_lockfile && revision_lockfile.specs != current_specs
+      end&.dig(:id)
+    end
 
     def history_for_paths(paths, limit: 20)
       return [] if git_root.nil? || git_root.empty?
@@ -162,28 +176,25 @@ module Gemstar
     end
 
     def version_label(old_version, new_version)
-      return "new -> #{new_version}" if old_version.nil? && !new_version.nil?
-      return "#{old_version} -> removed" if !old_version.nil? && new_version.nil?
+      return "new → #{new_version}" if old_version.nil? && !new_version.nil?
+      return "#{old_version} → removed" if !old_version.nil? && new_version.nil?
       return new_version.to_s if old_version == new_version
 
-      "#{old_version} -> #{new_version}"
-    end
-
-    def status_rank(status)
-      {
-        upgrade: 0,
-        added: 1,
-        downgrade: 2,
-        removed: 3,
-        changed: 4,
-        unchanged: 5
-      }.fetch(status, 9)
+      "#{old_version} → #{new_version}"
     end
 
     def compare_versions(left, right)
       Gem::Version.new(left.to_s.gsub(/-[\w\-]+$/, "")) <=> Gem::Version.new(right.to_s.gsub(/-[\w\-]+$/, ""))
     rescue ArgumentError
       left.to_s <=> right.to_s
+    end
+
+    def bundle_origin_labels(origins)
+      Array(origins).map do |origin|
+        next "Gemfile" if origin[:type] == :direct
+
+        ["Gemfile", *origin[:path]].join(" → ")
+      end.compact.uniq
     end
   end
 end
