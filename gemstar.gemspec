@@ -37,4 +37,7 @@ Gem::Specification.new do |s|
   s.add_dependency "concurrent-ruby", "~> 1.0"
   s.add_dependency "thor", "~> 1.4"
   s.add_dependency "nokogiri", "~> 1.18"
+  s.add_dependency "roda", "~> 3.90"
+  s.add_dependency "rackup", "~> 2.2"
+  s.add_dependency "webrick", "~> 1.9"
 end

@@ -13,8 +13,18 @@
         - playwright-ruby-client uses release tags?
     - bundler itself
     - use changelog files from installed gems where present
+    - use 'gh' tool to fetch GitHub releases
+    - support downgrading pinned gems, i.e. minitest 6.0 -> 5.x
+    - read release notes from locally installed gems
+    - for each gem, show why it's included (Gemfile or 2nd dependency)
 
 ## Unreleased
+
+- Added `gemstar server`, your interactive Gemfile.lock explorer and more.
+- Default location for `diff` is now a tmp file.
+- Removed Railtie from this gem.
+- Improve how git root dir is determined.
+
 
 ## 0.0.2
 

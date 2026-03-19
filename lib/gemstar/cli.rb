@@ -19,6 +19,14 @@ module Gemstar
       Gemstar::Commands::Diff.new(options).run
     end
 
+    desc "server", "Start the interactive web server"
+    method_option :bind, type: :string, default: "127.0.0.1", desc: "Bind address"
+    method_option :port, type: :numeric, default: 2112, desc: "Port"
+    method_option :project, type: :array, default: [], desc: "Project directories or Gemfile paths"
+    def server
+      Gemstar::Commands::Server.new(options).run
+    end
+
     # desc "pick", "Interactively cherry-pick and upgrade gems"
     # option :gem, type: :string, desc: "Gem name to cherry-pick"
     # def pick
