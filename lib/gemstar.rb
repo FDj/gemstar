@@ -1,8 +1,11 @@
 # frozen_string_literal: true
 
 require "gemstar/version"
+require "gemstar/cache_cli"
 require "gemstar/cli"
+require "gemstar/cache_warmer"
 require "gemstar/commands/command"
+require "gemstar/commands/cache"
 require "gemstar/commands/diff"
 require "gemstar/commands/server"
 require "gemstar/config"

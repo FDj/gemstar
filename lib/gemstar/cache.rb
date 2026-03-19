@@ -1,10 +1,11 @@
+require_relative "config"
 require "fileutils"
 require "digest"
 
 module Gemstar
   class Cache
     MAX_CACHE_AGE = 60 * 60 * 24 * 7 # 1 week
-    CACHE_DIR = ".gem_changelog_cache"
+    CACHE_DIR = File.join(Gemstar::Config.home_directory, "cache")
 
     @@initialized = false
 
@@ -18,15 +19,12 @@ module Gemstar
     def self.fetch(key, &block)
       init
 
-      path = File.join(CACHE_DIR, Digest::SHA256.hexdigest(key))
+      path = path_for(key)
 
-      if File.exist?(path)
-        age = Time.now - File.mtime(path)
-        if age <= MAX_CACHE_AGE
-          content = File.read(path)
-          return nil if content == "__404__"
-          return content
-        end
+      if fresh?(path)
+        content = File.read(path)
+        return nil if content == "__404__"
+        return content
       end
 
       begin
@@ -39,11 +37,50 @@ module Gemstar
       end
     end
 
+    def self.peek(key)
+      init
+
+      path = path_for(key)
+      return nil unless fresh?(path)
+
+      content = File.read(path)
+      return nil if content == "__404__"
+
+      content
+    end
+
+    def self.path_for(key)
+      File.join(CACHE_DIR, Digest::SHA256.hexdigest(key))
+    end
+
+    def self.fresh?(path)
+      return false unless File.exist?(path)
+
+      (Time.now - File.mtime(path)) <= MAX_CACHE_AGE
+    end
+
+    def self.flush!
+      init
+
+      flush_directory(CACHE_DIR)
+    end
+
+    def self.flush_directory(directory)
+      return 0 unless Dir.exist?(directory)
+
+      entries = Dir.children(directory)
+      entries.each do |entry|
+        FileUtils.rm_rf(File.join(directory, entry))
+      end
+
+      entries.count
+    end
+
   end
 
   def edit_gitignore
     gitignore_path = ".gitignore"
-    ignore_entries = %w[.gem_changelog_cache/ gem_update_changelog.html]
+    ignore_entries = %w[gem_update_changelog.html]
 
     existing_lines = File.exist?(gitignore_path) ? File.read(gitignore_path).lines.map(&:chomp) : []
 
