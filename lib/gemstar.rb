@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "gemstar/version"
-require "gemstar/railtie" if defined?(Rails::Railtie)
 require "gemstar/cli"
 require "gemstar/commands/command"
 require "gemstar/commands/diff"
