@@ -2,14 +2,16 @@ module Gemstar
   class GitRepo
     def initialize(specified_directory)
       @specified_directory = specified_directory || Dir.pwd
-      @tree_root_directory = find_git_root(File.dirname(@specified_directory))
+      search_directory = if File.directory?(@specified_directory)
+        @specified_directory
+      else
+        File.dirname(@specified_directory)
+      end
+      @tree_root_directory = find_git_root(search_directory)
     end
 
     def find_git_root(directory)
-      # return directory if File.directory?(File.join(directory, ".git"))
-      # find_git_root(File.dirname(directory))
-
-      run_git_command(%W[rev-parse --show-toplevel])
+      run_git_command(%W[rev-parse --show-toplevel], in_directory: directory)
     end
 
     def git_client
