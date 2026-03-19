@@ -30,6 +30,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency "combustion", "~> 1.5"
   s.add_development_dependency "rake", "~> 13.0"
   s.add_development_dependency "minitest", "~> 5.0"
+  s.add_development_dependency "rerun", "~> 0.14"
 
   s.add_dependency "kramdown", "~> 2.0"
   s.add_dependency "kramdown-parser-gfm", "~> 1.0"
@@ -37,4 +38,7 @@ Gem::Specification.new do |s|
   s.add_dependency "concurrent-ruby", "~> 1.0"
   s.add_dependency "thor", "~> 1.4"
   s.add_dependency "nokogiri", "~> 1.18"
+  s.add_dependency "roda", "~> 3.90"
+  s.add_dependency "rackup", "~> 2.2"
+  s.add_dependency "webrick", "~> 1.9"
 end

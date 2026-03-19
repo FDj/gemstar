@@ -10,49 +10,65 @@ module Gemstar
 
     attr_reader :gem_name
 
-    def meta
-      @meta ||=
-        begin
-          url = "https://rubygems.org/api/v1/gems/#{URI.encode_www_form_component(gem_name)}.json"
-          Cache.fetch("rubygems-#{gem_name}") do
-            URI.open(url).read
-          end.then { |json|
-            begin
-              JSON.parse(json) if json
-            rescue
-              nil
-            end }
+    def meta(cache_only: false)
+      return @meta if !cache_only && defined?(@meta)
+
+      json = if cache_only
+        Cache.peek("rubygems-#{gem_name}")
+      else
+        url = "https://rubygems.org/api/v1/gems/#{URI.encode_www_form_component(gem_name)}.json"
+        Cache.fetch("rubygems-#{gem_name}") do
+          URI.open(url).read
         end
+      end
+
+      parsed = begin
+        JSON.parse(json) if json
+      rescue
+        nil
+      end
+
+      @meta = parsed unless cache_only
+      parsed
     end
 
-    def repo_uri
-      return nil unless meta
+    def repo_uri(cache_only: false)
+      resolved_meta = meta(cache_only: cache_only)
+      return nil unless resolved_meta
 
-      @repo_uri ||= begin
-                      uri = meta["source_code_uri"]
+      return @repo_uri if !cache_only && defined?(@repo_uri)
 
-                      if uri.nil?
-                        uri = meta["homepage_uri"]
-                        if uri.include?("github.com")
-                          uri = uri[%r{http[s?]://github\.com/[^/]+/[^/]+}]
-                        end
-                      end
+      repo = begin
+               uri = resolved_meta["source_code_uri"]
 
-                      uri ||= ""
+               if uri.nil?
+                 uri = resolved_meta["homepage_uri"]
+                 if uri.include?("github.com")
+                   uri = uri[%r{http[s?]://github\.com/[^/]+/[^/]+}]
+                 end
+               end
 
-                      uri = uri.sub("http://", "https://")
+               uri ||= ""
 
-                      uri = uri.gsub(/\.git$/, "")
+               uri = uri.sub("http://", "https://")
 
-                      if uri.include?("github.io")
-                        # Convert e.g. https://socketry.github.io/console/ to https://github.com/socketry/console/
-                        uri = uri.sub(%r{\Ahttps?://([\w-]+)\.github\.io/([^/]+)}) do
-                          "https://github.com/#{$1}/#{$2}"
-                        end
-                      end
+               uri = uri.gsub(/\.git$/, "")
 
-                      uri
-                    end
+               if uri.include?("github.io")
+                 uri = uri.sub(%r{\Ahttps?://([\w-]+)\.github\.io/([^/]+)}) do
+                   "https://github.com/#{$1}/#{$2}"
+                 end
+               end
+
+               if uri.include?("github.com")
+                 uri = uri[%r{\Ahttps?://github\.com/[^/]+/[^/]+}] || uri
+               end
+
+               uri
+             end
+
+      @repo_uri = repo unless cache_only
+      repo
     end
 
   end

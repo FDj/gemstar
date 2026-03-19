@@ -47,6 +47,16 @@ To examine a specific Gemfile.lock, pass it like this:
 gemstar diff --lockfile=~/MyProject/Gemfile.lock
 ```
 
+### gemstar server
+
+Start the interactive web UI:
+
+```shell
+gemstar server
+```
+
+By default, the server listens to http://127.0.0.1:2112/ 
+
 ## Contributing
 
 Bug reports and pull requests are welcome on GitHub at [https://github.com/FDj/gemstar](https://github.com/FDj/gemstar).

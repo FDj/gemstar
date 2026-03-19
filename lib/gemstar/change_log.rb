@@ -10,21 +10,30 @@ module Gemstar
 
     attr_reader :metadata
 
-    def content
-      @content ||= fetch_changelog_content
+    def content(cache_only: false)
+      return @content if !cache_only && defined?(@content)
+
+      result = fetch_changelog_content(cache_only: cache_only)
+      @content = result unless cache_only
+      result
     end
 
-    def sections
-      @sections ||= begin
-                      s = parse_changelog_sections
-                      if s.nil? || s.empty?
-                        s = parse_github_release_sections
-                      end
+    def sections(cache_only: false)
+      return @sections if !cache_only && defined?(@sections)
 
-                      pp @@candidates_found if Gemstar.debug?
+      result = begin
+        s = parse_changelog_sections(cache_only: cache_only)
+        if s.nil? || s.empty?
+          s = parse_github_release_sections(cache_only: cache_only)
+        end
 
-                      s
-                    end
+        pp @@candidates_found if Gemstar.debug? && !cache_only
+
+        s
+      end
+
+      @sections = result unless cache_only
+      result
     end
 
     def extract_relevant_sections(old_version, new_version)
@@ -52,26 +61,30 @@ module Gemstar
     def extract_version_from_heading(line)
       return nil unless line
       heading = line.to_s
+      version_token = /(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)/
       # 1) Prefer version inside parentheses after a date: "### 2025-11-07 (2.16.0)"
       #    Ensure we ONLY treat it as a version if it actually looks like a version (has a dot),
       #    so we don't capture dates like (2025-11-21).
-      return $1 if heading[/\(\s*v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\s*\)/]
+      return $1 if heading[/\(\s*v?#{version_token}(?![A-Za-z0-9])\s*\)/]
       # 2) Version-first with optional leading markers/labels: "## v1.2.6 - 2025-10-21"
       #    Require a dot in the numeric token to avoid capturing dates like 2025-11-21.
-      return $1 if heading[/^\s*(?:#+|=+)?\s*(?:Version\s+)?\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?/i]
+      return $1 if heading[/^\s*(?:[-*]\s+)?(?:#+|=+)?\s*(?:Version\s+)?\[*v?#{version_token}(?![A-Za-z0-9])\]*/i]
       # 3) Anywhere: first semver-like token with a dot
-      return $1 if heading[/\bv?(\d+\.\d+(?:\.\d+)?(?:[A-Za-z0-9.\-])*)\b/]
+      return $1 if heading[/\bv?#{version_token}(?![A-Za-z0-9])\b/]
       nil
     end
 
-    def changelog_uri_candidates
+    def changelog_uri_candidates(cache_only: false)
       candidates = []
 
-      if @metadata.repo_uri =~ %r{https://github\.com/aws/aws-sdk-ruby}
+      repo_uri = @metadata.repo_uri(cache_only: cache_only)
+      return [] if repo_uri.nil? || repo_uri.empty?
+
+      if repo_uri =~ %r{https://github\.com/aws/aws-sdk-ruby}
         base = "https://raw.githubusercontent.com/aws/aws-sdk-ruby/refs/heads/version-3/gems/#{@metadata.gem_name}"
         aws_style = true
       else
-        base = @metadata.repo_uri.sub("https://github.com", "https://raw.githubusercontent.com")
+        base = repo_uri.sub("https://github.com", "https://raw.githubusercontent.com")
         aws_style = false
       end
 
@@ -94,7 +107,8 @@ module Gemstar
       end
 
       # Add the gem's changelog_uri last as it's usually not the most parsable:
-      candidates += [Gemstar::GitHub::github_blob_to_raw(@metadata.meta["changelog_uri"])]
+      meta = @metadata.meta(cache_only: cache_only)
+      candidates += [Gemstar::GitHub::github_blob_to_raw(meta["changelog_uri"])] if meta
 
       candidates.flatten!
       candidates.uniq!
@@ -103,15 +117,19 @@ module Gemstar
       candidates
     end
 
-    def fetch_changelog_content
+    def fetch_changelog_content(cache_only: false)
       content = nil
 
-      changelog_uri_candidates.find do |candidate|
-        content = Cache.fetch("changelog-#{candidate}") do
-          URI.open(candidate, read_timeout: 8)&.read
-        rescue => e
-          puts "#{candidate}: #{e}" if Gemstar.debug?
-          nil
+      changelog_uri_candidates(cache_only: cache_only).find do |candidate|
+        content = if cache_only
+          Cache.peek("changelog-#{candidate}")
+        else
+          Cache.fetch("changelog-#{candidate}") do
+            URI.open(candidate, read_timeout: 8)&.read
+          rescue => e
+            puts "#{candidate}: #{e}" if Gemstar.debug?
+            nil
+          end
         end
 
         # puts "fetch_changelog_content #{candidate}:\n#{content}" if Gemstar.debug?
@@ -127,18 +145,18 @@ module Gemstar
     end
 
     VERSION_PATTERNS = [
-      /^\s*(?:#+|=+)\s*\d{4}-\d{2}-\d{2}\s*\(\s*v?(\d[\w.\-]+)\s*\)/, # prefer this
-      /^\s*(?:#+|=+)\s*\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?\s*(?:—|–|-)\s*\d{4}-\d{2}-\d{2}\b/,
-      /^\s*(?:#+|=+)\s*(?:Version\s+)?(?:(?:[^\s\d][^\s]*\s+)+)\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?(?:\s*[-(].*)?/i,
-      /^\s*(?:#+|=+)\s*(?:Version\s+)?\[?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)\]?(?:\s*[-(].*)?/i,
-      /^\s*(?:Version\s+)?v?(\d+\.\d+(?:\.\d+)?[A-Za-z0-9.\-]*)(?:\s*[-(].*)?/i
+      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*\d{4}-\d{2}-\d{2}\s*\(\s*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\s*\)/, # prefer this
+      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*\[*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\]*\s*(?:—|–|-)\s*\d{4}-\d{2}-\d{2}\b/,
+      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*(?:Version\s+)?(?:(?:[^\s\d][^\s]*\s+)+)\[*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\]*(?:\s*[-(].*)?/i,
+      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*(?:Version\s+)?\[*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\]*(?:\s*[-(].*)?/i,
+      /^\s*(?:[-*]\s+)?(?:Version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])(?:\s*[-(].*)?/i
     ]
 
-    def parse_changelog_sections
+    def parse_changelog_sections(cache_only: false)
       # If the fetched content looks like a GitHub Releases HTML page, return {}
       # so that the GitHub releases scraper can handle it. This avoids
       # accidentally parsing HTML from /releases pages as a markdown changelog.
-      c = content
+      c = content(cache_only: cache_only)
       return {} if c.nil? || c.strip.empty?
       if (c.include?("<html") || c.include?("<!DOCTYPE html")) &&
          (c.include?('data-test-selector="body-content"') || c.include?("/releases/tag/"))
@@ -194,24 +212,37 @@ module Gemstar
       sections
     end
 
-    def parse_github_release_sections
+    def parse_github_release_sections(cache_only: false)
       begin
         require "nokogiri"
       rescue LoadError
         return {}
       end
 
-      return {} unless @metadata&.repo_uri&.include?("github.com")
+      repo_uri = @metadata&.repo_uri(cache_only: cache_only)
+      return {} unless repo_uri&.include?("github.com")
 
-      url = github_releases_url
+      url = github_releases_url(repo_uri)
       return {} unless url
 
-      html = Cache.fetch("releases-#{url}") do
-        begin
-          URI.open(url, read_timeout: 8)&.read
-        rescue => e
-          puts "#{url}: #{e}" if Gemstar.debug?
-          nil
+      html = if cache_only
+        Cache.peek("releases-#{url}")
+      else
+        Cache.fetch("releases-#{url}") do
+          begin
+            URI.open(url, read_timeout: 8)&.read
+          rescue => e
+            puts "#{url}: #{e}" if Gemstar.debug?
+            nil
+          end
+        end
+      end
+
+      if (html.nil? || html.strip.empty?) && cache_only
+        cached_content = content(cache_only: true)
+        if cached_content&.include?("<html") &&
+           (cached_content.include?('data-test-selector="body-content"') || cached_content.include?("/releases/tag/"))
+          html = cached_content
         end
       end
 
@@ -271,9 +302,9 @@ module Gemstar
       sections
     end
 
-    def github_releases_url
-      return nil unless @metadata&.repo_uri
-      repo = @metadata.repo_uri.chomp("/")
+    def github_releases_url(repo_uri = @metadata&.repo_uri)
+      return nil unless repo_uri
+      repo = repo_uri.chomp("/")
       return nil if repo.empty?
       "#{repo}/releases"
     end
