@@ -216,16 +216,20 @@
         font-size: 0.9rem;
       }
       .sidebar-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.5rem;
+        display: grid;
+        gap: 0.35rem;
         position: sticky;
         top: -0.45rem;
         z-index: 1;
         background: #fff;
         padding: 0.45rem 0 0.35rem;
         border-bottom: 1px solid #f0ede6;
+      }
+      .sidebar-header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
       }
       .list-filters {
         display: flex;
@@ -246,6 +250,18 @@
         border-color: rgba(47, 143, 91, 0.4);
         background: var(--green-soft);
         color: var(--green);
+      }
+      .gem-search {
+        width: 100%;
+        border: 1px solid #e2ddd2;
+        border-radius: 0.35rem;
+        padding: 0.32rem 0.45rem;
+        background: #fff;
+        color: var(--ink);
+        font-size: 0.78rem;
+      }
+      .gem-search::placeholder {
+        color: #93877b;
       }
       .gem-list {
         display: grid;

@@ -119,6 +119,32 @@ module Gemstar
       end.sort_by { |gem| gem[:name] }
     end
 
+    def gem_added_on(gem_name, revision_id: "worktree")
+      return nil unless lockfile?
+
+      target_lockfile = lockfile_for_revision(revision_id)
+      return nil unless target_lockfile&.specs&.key?(gem_name)
+
+      relative_path = git_repo.relative_path(lockfile_path)
+      return nil if relative_path.nil?
+
+      first_seen_revision = history_for_paths([relative_path], limit: nil, reverse: true).find do |revision|
+        lockfile = lockfile_for_revision(revision[:id])
+        lockfile&.specs&.key?(gem_name)
+      end
+
+      return worktree_added_on_info if first_seen_revision.nil? && revision_id == "worktree"
+      return nil unless first_seen_revision
+
+      {
+        project_name: name,
+        date: first_seen_revision[:authored_at].strftime("%Y-%m-%d"),
+        revision: first_seen_revision[:short_sha],
+        revision_url: revision_url(first_seen_revision[:id]),
+        worktree: false
+      }
+    end
+
     private
 
     def default_changed_lockfile_revision_id
@@ -132,11 +158,11 @@ module Gemstar
       end&.dig(:id)
     end
 
-    def history_for_paths(paths, limit: 20)
+    def history_for_paths(paths, limit: 20, reverse: false)
       return [] if git_root.nil? || git_root.empty?
       return [] if paths.empty?
 
-      output = git_repo.log_for_paths(paths, limit: limit)
+      output = git_repo.log_for_paths(paths, limit: limit, reverse: reverse)
       return [] if output.nil? || output.empty?
 
       output.lines.filter_map do |line|
@@ -195,6 +221,25 @@ module Gemstar
 
         ["Gemfile", *origin[:path]].join(" → ")
       end.compact.uniq
+    end
+
+    def worktree_added_on_info
+      return nil unless File.file?(lockfile_path)
+
+      {
+        project_name: name,
+        date: File.mtime(lockfile_path).strftime("%Y-%m-%d"),
+        revision: "Worktree",
+        revision_url: nil,
+        worktree: true
+      }
+    end
+
+    def revision_url(full_sha)
+      repo_url = git_repo.origin_repo_url
+      return nil unless repo_url&.include?("github.com")
+
+      "#{repo_url}/commit/#{full_sha}"
     end
   end
 end

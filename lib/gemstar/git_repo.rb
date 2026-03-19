@@ -82,11 +82,41 @@ module Gemstar
       nil
     end
 
-    def log_for_paths(paths, limit: 20)
+    def origin_repo_url
+      remote = try_git_command(["remote", "get-url", "origin"])
+      return nil if remote.nil? || remote.empty?
+
+      normalize_remote_url(remote)
+    end
+
+    def log_for_paths(paths, limit: 20, reverse: false)
       return "" if tree_root_directory.nil? || tree_root_directory.empty? || paths.empty?
 
       format = "%H%x1f%h%x1f%aI%x1f%s"
-      run_git_command(["log", "-n", limit.to_s, "--pretty=format:#{format}", "--", *paths], in_directory: tree_root_directory)
+      command = ["log"]
+      command += ["-n", limit.to_s] if limit
+      command << "--reverse" if reverse
+      command += ["--pretty=format:#{format}", "--", *paths]
+
+      run_git_command(command, in_directory: tree_root_directory)
+    end
+
+    private
+
+    def normalize_remote_url(remote)
+      normalized = remote.strip.sub(%r{\.git\z}, "")
+
+      if normalized.start_with?("git@github.com:")
+        path = normalized.delete_prefix("git@github.com:")
+        return "https://github.com/#{path}"
+      end
+
+      if normalized.start_with?("ssh://git@github.com/")
+        path = normalized.delete_prefix("ssh://git@github.com/")
+        return "https://github.com/#{path}"
+      end
+
+      normalized.sub(%r{\Ahttp://}, "https://")
     end
   end
 end

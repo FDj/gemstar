@@ -44,6 +44,16 @@ module Gemstar
           render_detail
         end
 
+        r.get "gemfile" do
+          project_index = selected_project_index(r.params["project"])
+          project = @projects[project_index]
+          response.status = 404
+          next "Gemfile not found" unless project && File.file?(project.gemfile_path)
+
+          response["Content-Type"] = "text/plain; charset=utf-8"
+          File.read(project.gemfile_path)
+        end
+
         r.on "projects", String do |project_id|
           response.redirect "/?project=#{project_id}"
         end
@@ -310,11 +320,21 @@ module Gemstar
         <<~HTML
           <aside class="sidebar" data-sidebar-panel tabindex="0">
             <div class="sidebar-header">
-              <h2>Gems</h2>
-              <div class="list-filters" data-list-filters>
-                <button type="button" class="list-filter-button#{' is-active' if @selected_filter == "updated"}" data-filter-button="updated">Updated</button>
-                <button type="button" class="list-filter-button#{' is-active' if @selected_filter == "all"}" data-filter-button="all">All</button>
+              <div class="sidebar-header-row">
+                <h2>Gems</h2>
+                <div class="list-filters" data-list-filters>
+                  <button type="button" class="list-filter-button#{' is-active' if @selected_filter == "updated"}" data-filter-button="updated">Updated</button>
+                  <button type="button" class="list-filter-button#{' is-active' if @selected_filter == "all"}" data-filter-button="all">All</button>
+                </div>
               </div>
+              <input
+                type="search"
+                class="gem-search"
+                data-gem-search
+                placeholder="Filter gems"
+                autocomplete="off"
+                spellcheck="false"
+              >
             </div>
             #{render_gem_list}
           </aside>
@@ -393,6 +413,7 @@ module Gemstar
         bundle_origins = Array(@selected_gem[:bundle_origins])
         requirement_names = selected_gem_requirements
         bundled_version = @selected_gem[:new_version]
+        added_on = selected_gem_added_on
         title_url = metadata&.dig("homepage_uri")
         title_url = Gemstar::RubyGemsMetadata.new(@selected_gem[:name]).repo_uri(cache_only: true) if title_url.to_s.empty?
         title_markup = if title_url.to_s.empty?
@@ -409,6 +430,7 @@ module Gemstar
                 #{render_detail_links(metadata)}
               </div>
               <p class="detail-subtitle">#{description ? h(description) : "Metadata will appear here when RubyGems information is available."}</p>
+              #{render_added_on(added_on)}
               #{render_dependency_origins(bundle_origins)}
               #{render_requirements(requirement_names)}
             </div>
@@ -416,13 +438,32 @@ module Gemstar
         HTML
       end
 
+      def render_added_on(added_on)
+        return "" unless added_on
+
+        revision_markup = if added_on[:revision_url]
+          %(<a href="#{h(added_on[:revision_url])}" target="_blank" rel="noreferrer" data-gem-link-inline="true">#{h(added_on[:revision])}</a>)
+        else
+          h(added_on[:revision])
+        end
+
+        <<~HTML
+          <div class="detail-origin">
+            <p>Added to #{h(added_on[:project_name])} on #{h(added_on[:date])} (#{revision_markup}).</p>
+          </div>
+        HTML
+      end
+
       def render_dependency_origins(bundle_origins)
         origins = Array(bundle_origins).filter_map do |origin|
           path = Array(origin[:path]).compact
-          next if path.empty?
+          display_path = path.dup
+          display_path.pop if display_path.last == @selected_gem[:name]
 
-          linked_path = linked_gem_chain(["Gemfile", *path])
-          origin[:type] == :direct ? "Gemfile" : linked_path
+          next if origin[:type] != :direct && display_path.empty?
+
+          linked_path = linked_gem_chain(["Gemfile", *display_path])
+          origin[:type] == :direct ? gemfile_link("Gemfile") : linked_path
         end.uniq
         return "" if origins.empty?
 
@@ -479,10 +520,26 @@ module Gemstar
         Array(lockfile&.dependency_graph&.fetch(@selected_gem[:name], nil))
       end
 
+      def selected_gem_added_on
+        revision_id = @selected_gem[:new_version] ? @selected_to_revision_id : @selected_from_revision_id
+        @selected_project&.gem_added_on(@selected_gem[:name], revision_id: revision_id)
+      end
+
       def linked_gem_chain(names)
         Array(names).map.with_index do |name, index|
-          index.zero? ? h(name) : internal_gem_link(name)
+          if index.zero?
+            gemfile_link(name)
+          else
+            internal_gem_link(name)
+          end
         end.join(" → ")
+      end
+
+      def gemfile_link(label = "Gemfile")
+        return h(label) unless @selected_project
+
+        href = "/gemfile?#{URI.encode_www_form(project: @selected_project_index)}"
+        %(<a href="#{h(href)}" target="_blank" rel="noreferrer" data-gem-link-inline="true">#{h(label)}</a>)
       end
 
       def internal_gem_link(name)
@@ -503,7 +560,7 @@ module Gemstar
         <<~HTML
           <section class="revision-panel">
             #{render_revision_group("Latest", groups[:latest], empty_message: nil) if groups[:latest].any?}
-            #{render_revision_group(current_section_title, groups[:current], empty_message: "No changelog entries matched this revision range.")}
+            #{render_revision_group(current_section_title, groups[:current], empty_message: "No changelog entries in this revision range.")}
             #{render_revision_group("Previous changes", groups[:previous], empty_message: nil) if groups[:previous].any?}
           </section>
         HTML
@@ -563,11 +620,19 @@ module Gemstar
 
       def grouped_change_sections(gem_state)
         sections = change_sections(gem_state)
+        latest = sections.select { |section| section[:kind] == :future }
+        current = sections.select { |section| section[:kind] == :current }
+        previous = sections.select { |section| section[:kind] == :previous }
+
+        if current.empty?
+          fallback = fallback_current_section(gem_state, previous, latest)
+          current = [fallback] if fallback
+        end
 
         {
-          latest: sections.select { |section| section[:kind] == :future },
-          current: sections.select { |section| section[:kind] == :current },
-          previous: sections.select { |section| section[:kind] == :previous }
+          latest: latest,
+          current: current,
+          previous: previous
         }
       end
 
@@ -739,6 +804,35 @@ module Gemstar
         release_url = github_release_url(repo_url, section[:version])
         links << icon_button("Release", release_url, icon_type: :github) if release_url && compare_url.nil?
         links
+      end
+
+      def fallback_current_section(gem_state, previous_sections, latest_sections)
+        version = gem_state[:new_version] || gem_state[:old_version]
+        return nil if version.nil?
+        return nil if previous_sections.any? { |section| section[:version] == version }
+        return nil if latest_sections.any? { |section| section[:version] == version }
+
+        repo_url = Gemstar::RubyGemsMetadata.new(gem_state[:name]).repo_uri(cache_only: true)
+        repo_link = if repo_url.to_s.empty?
+          "the gem repository"
+        else
+          %(<a href="#{h(repo_url)}" target="_blank" rel="noreferrer">the gem repository</a>)
+        end
+
+        {
+          version: version,
+          title: version,
+          kind: :current,
+          previous_version: fallback_previous_version_for(gem_state, previous_sections),
+          html: "<p>No release information available. Check #{repo_link} for more information.</p>"
+        }
+      end
+
+      def fallback_previous_version_for(gem_state, previous_sections)
+        return gem_state[:old_version] if gem_state[:new_version]
+        return previous_sections.first[:version] if previous_sections.any?
+
+        nil
       end
 
       def github_compare_url(repo_url, previous_version, current_version)

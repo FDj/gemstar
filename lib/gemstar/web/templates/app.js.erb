@@ -4,11 +4,13 @@
   const toSelect = document.querySelector("[data-to-select]");
   const sidebarPanel = document.querySelector("[data-sidebar-panel]");
   const filterButtons = Array.from(document.querySelectorAll("[data-filter-button]"));
+  const gemSearch = document.querySelector("[data-gem-search]");
   const emptyGemList = document.querySelector("[data-gem-list-empty]");
   let detailPanel = document.querySelector("[data-detail-panel]");
   const gemLinks = Array.from(document.querySelectorAll("[data-gem-link]"));
   let detailPollTimer = null;
   let currentFilter = <%= selected_filter_json %>;
+  let currentSearch = "";
   const emptyDetailHtml = <%= empty_detail_html_json %>;
 
   const visibleGemLinks = () => gemLinks.filter((link) => !link.hidden);
@@ -23,6 +25,7 @@
   const applyGemFilter = (filter) => {
     currentFilter = filter;
     const pinnedGemName = requestedGemName();
+    const searchTerm = currentSearch.trim().toLowerCase();
 
     filterButtons.forEach((button) => {
       button.classList.toggle("is-active", button.dataset.filterButton === filter);
@@ -31,11 +34,15 @@
     gemLinks.forEach((link) => {
       const updated = link.dataset.gemUpdated === "true";
       const pinned = pinnedGemName && link.dataset.gemName === pinnedGemName;
-      link.hidden = filter === "updated" && !updated && !pinned;
+      const matchesSearch = searchTerm === "" || link.dataset.gemName.toLowerCase().includes(searchTerm);
+      link.hidden = ((filter === "updated" && !updated && !pinned) || !matchesSearch);
     });
 
     if (emptyGemList) {
-      emptyGemList.hidden = !(filter === "updated" && visibleGemLinks().length === 0);
+      const emptyMessage = searchTerm === "" ? "No updated gems in this revision range." : "No gems match this filter.";
+      emptyGemList.hidden = visibleGemLinks().length !== 0;
+      const text = emptyGemList.querySelector("p");
+      if (text) text.textContent = emptyMessage;
     }
 
     if (currentSelectedIndex() === -1) {
@@ -147,6 +154,17 @@
       syncSidebarSelection(null, true);
     });
   });
+
+  if (gemSearch) {
+    gemSearch.addEventListener("input", (event) => {
+      currentSearch = event.target.value || "";
+      applyGemFilter(currentFilter);
+      if (sidebarPanel) {
+        sidebarPanel.scrollTop = 0;
+      }
+      syncSidebarSelection(null, true);
+    });
+  }
 
   const navigate = (params) => {
     const url = new URL(window.location.href);
