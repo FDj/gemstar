@@ -22,6 +22,19 @@ gem "gemstar", group: :development
 
 ## Usage
 
+### gemstar server
+
+![Gemstar diff command output](docs/server.png)
+
+Start the interactive web UI:
+
+```shell
+gemstar server
+```
+
+By default, the server listens to http://127.0.0.1:2112/
+
+
 ### gemstar diff
 
 Run this after you've updated your gems.
@@ -46,16 +59,6 @@ To examine a specific Gemfile.lock, pass it like this:
 ```shell
 gemstar diff --lockfile=~/MyProject/Gemfile.lock
 ```
-
-### gemstar server
-
-Start the interactive web UI:
-
-```shell
-gemstar server
-```
-
-By default, the server listens to http://127.0.0.1:2112/ 
 
 ## Contributing
 
