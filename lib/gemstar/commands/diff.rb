@@ -2,7 +2,7 @@
 
 require_relative "command"
 require "concurrent-ruby"
-require "tempfile"
+require "tmpdir"
 
 module Gemstar
   module Commands
@@ -24,7 +24,7 @@ module Gemstar
         @from = options[:from] || "HEAD"
         @to = options[:to]
         @lockfile = options[:lockfile] || "Gemfile.lock"
-        @output_file = options[:output_file] || "gem_update_changelog.html"
+        @output_file = options[:output_file] || File.join(Dir.tmpdir, "gem_update_changelog.html")
 
         @git_repo = Gemstar::GitRepo.new(File.dirname(@lockfile))
       end
@@ -46,7 +46,7 @@ module Gemstar
 
         html = Outputs::HTML.new.render_diff(self)
         File.write(output_file, html)
-        puts "✅ gem_update_changelog.html created."
+        puts "✅ Changelog report created: #{File.expand_path(output_file)}"
 
         if failed.any?
           puts "\n⚠️ The following gems failed to process:"
