@@ -15,6 +15,7 @@ module Gemstar
       attr_reader :git_repo
       attr_reader :lockfile_full_path
       attr_reader :output_file
+      attr_reader :output_format
 
       def initialize(options)
         super
@@ -24,7 +25,8 @@ module Gemstar
         @from = options[:from] || "HEAD"
         @to = options[:to]
         @lockfile = options[:lockfile] || "Gemfile.lock"
-        @output_file = options[:output_file] || File.join(Dir.tmpdir, "gem_update_changelog.html")
+        @output_format = normalize_output_format(options[:format] || options[:output_format])
+        @output_file = options[:output_file] || default_output_file
 
         @git_repo = Gemstar::GitRepo.new(File.dirname(@lockfile))
       end
@@ -44,8 +46,8 @@ module Gemstar
 
         collect_updates(new_lockfile: new, old_lockfile: old)
 
-        html = Outputs::HTML.new.render_diff(self)
-        File.write(output_file, html)
+        rendered_output = output_renderer.render_diff(self)
+        File.write(output_file, rendered_output)
         puts "✅ Changelog report created: #{File.expand_path(output_file)}"
 
         if failed.any?
@@ -55,6 +57,27 @@ module Gemstar
       end
 
       private
+
+      def normalize_output_format(value)
+        format = value.to_s.strip.downcase
+        return :markdown if %w[md markdown].include?(format)
+
+        :html
+      end
+
+      def default_output_file
+        extension = output_format == :markdown ? "md" : "html"
+        File.join(Dir.tmpdir, "gem_update_changelog.#{extension}")
+      end
+
+      def output_renderer
+        @output_renderer ||= case output_format
+        when :markdown
+          Outputs::Markdown.new
+        else
+          Outputs::HTML.new
+        end
+      end
 
       def build_entry(gem_name:, old_version:, new_version:)
         metadata = Gemstar::RubyGemsMetadata.new(gem_name)

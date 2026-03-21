@@ -13,6 +13,7 @@ module Gemstar
     desc "diff", "Show changelogs for updated gems"
     method_option :from, type: :string, desc: "Git ref or lockfile"
     method_option :to, type: :string, desc: "Git ref or lockfile"
+    method_option :format, type: :string, desc: "Output format (html or markdown)"
     method_option :output_file, type: :string, desc: "Output file path"
     method_option :debug_gem_regex, type: :string, desc: "Debug matching gems", hide: true
     def diff

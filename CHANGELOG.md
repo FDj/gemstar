@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.0.1
+
+- Added `--format markdown` to `gemstar diff` command. 
+
+## 1.0
+
 - Added `gemstar server`, your interactive Gemfile.lock explorer and more.
 - Default location for `diff` is now a tmp file.
 - Removed Railtie from this gem.

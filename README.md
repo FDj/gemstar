@@ -60,6 +60,12 @@ To examine a specific Gemfile.lock, pass it like this:
 gemstar diff --lockfile=~/MyProject/Gemfile.lock
 ```
 
+To write markdown instead of html:
+
+```shell
+gemstar diff --format markdown
+```
+
 ## Contributing
 
 Bug reports and pull requests are welcome on GitHub at [https://github.com/FDj/gemstar](https://github.com/FDj/gemstar).

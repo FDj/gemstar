@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Gemstar # :nodoc:
-  VERSION = "1.0"
+  VERSION = "1.0.1"
 
   def self.debug?
     return @debug if defined?(@debug)
