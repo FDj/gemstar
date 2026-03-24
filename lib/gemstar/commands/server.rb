@@ -45,6 +45,7 @@ module Gemstar
         puts "Config home: #{Gemstar::Config.home_directory}"
         Rackup::Server.start(
           app: app,
+          server: "webrick",
           Host: bind,
           Port: port,
           AccessLog: [],

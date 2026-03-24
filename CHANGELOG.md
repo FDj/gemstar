@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.0.3
+
+- Load our own WEBrick to avoid conflicts with hosting puma.rb etc.
+- 
+
 ## 1.0.2
 
 - General server performance improvements.
