@@ -280,9 +280,11 @@
       .gem-row[hidden] {
         display: none;
       }
-      .gem-row:hover,
-      .gem-row.is-selected {
+      .gem-row:hover {
         background: #faf8f3;
+      }
+      .gem-row.is-selected {
+        background: #f2ece0;
       }
       .gem-name {
         font-weight: 700;
@@ -417,6 +419,24 @@
         border-radius: 0.25rem;
         background: #fff;
         padding: 0.5rem;
+      }
+      .detail-loading-shell {
+        min-height: 14rem;
+        display: grid;
+        place-items: center;
+      }
+      .detail-loading-spinner {
+        width: 2rem;
+        height: 2rem;
+        border-radius: 999px;
+        border: 0.18rem solid rgba(31, 27, 23, 0.12);
+        border-top-color: rgba(31, 27, 23, 0.62);
+        animation: detail-loading-spin 0.85s linear infinite;
+      }
+      @keyframes detail-loading-spin {
+        to {
+          transform: rotate(360deg);
+        }
       }
       .link-strip {
         display: flex;
