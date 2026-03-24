@@ -343,6 +343,10 @@
         min-width: 0;
         width: 100%;
       }
+      .detail-title-lockup {
+        min-width: 0;
+        flex: 1 1 auto;
+      }
       .detail-hero-copy h2 {
         margin: 0;
         font-size: 2.35rem;
@@ -359,6 +363,50 @@
         margin-left: auto;
         align-self: start;
         flex: 0 0 auto;
+      }
+      .detail-disclosure {
+        margin-top: 0.2rem;
+        border: 1px solid #ece8df;
+        border-radius: 0.3rem;
+        background: #fff;
+        padding: 0.45rem 0.55rem;
+      }
+      .detail-disclosure summary {
+        cursor: pointer;
+        user-select: none;
+        list-style: none;
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+      .detail-disclosure summary::-webkit-details-marker {
+        display: none;
+      }
+      .detail-disclosure-caret {
+        width: 0;
+        height: 0;
+        border-top: 0.3rem solid transparent;
+        border-bottom: 0.3rem solid transparent;
+        border-left: 0.42rem solid var(--muted);
+        transition: transform 120ms ease;
+        flex: 0 0 auto;
+      }
+      .detail-disclosure[open] .detail-disclosure-caret {
+        transform: rotate(90deg);
+      }
+      .detail-disclosure summary h3 {
+        margin: 0;
+        font-size: 1.1rem;
+        line-height: 1.2;
+        color: var(--ink);
+      }
+      .detail-disclosure-panel {
+        margin-top: 0.45rem;
+      }
+      .detail-info-section + .detail-info-section {
+        margin-top: 0.45rem;
+        padding-top: 0.45rem;
+        border-top: 1px solid #f0ede6;
       }
       .panel-heading-meta {
         color: var(--muted);
@@ -407,6 +455,7 @@
       .detail-origin-list {
         margin: 0.2rem 0 0 1.1rem;
         padding: 0;
+        font-size: 0.88rem;
       }
       .detail-origin-list li + li {
         margin-top: 0.12rem;

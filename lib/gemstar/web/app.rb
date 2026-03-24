@@ -426,13 +426,13 @@ module Gemstar
           <section class="detail-hero">
             <div class="detail-hero-copy">
               <div class="detail-title-row">
-                <h2>#{title_markup}#{bundled_version ? %(<span class="detail-title-version"> #{h(bundled_version)}</span>) : ""}</h2>
+                <div class="detail-title-lockup">
+                  <h2>#{title_markup}#{bundled_version ? %(<span class="detail-title-version"> #{h(bundled_version)}</span>) : ""}</h2>
+                </div>
                 #{render_detail_links(metadata)}
               </div>
               <p class="detail-subtitle">#{description ? h(description) : "Metadata will appear here when RubyGems information is available."}</p>
-              #{render_added_on(added_on)}
-              #{render_dependency_origins(bundle_origins)}
-              #{render_requirements(requirement_names)}
+              #{render_dependency_details(bundle_origins, requirement_names, added_on)}
             </div>
           </section>
         HTML
@@ -449,7 +449,7 @@ module Gemstar
 
         <<~HTML
           <div class="detail-origin">
-            <p>Added to #{h(added_on[:project_name])} on #{h(added_on[:date])} (#{revision_markup}).</p>
+            <p>Added to project <strong>#{h(added_on[:project_name])}</strong> on #{h(added_on[:date])} (#{revision_markup}).</p>
           </div>
         HTML
       end
@@ -495,18 +495,35 @@ module Gemstar
         HTML
       end
 
-      def render_requirements(requirement_names)
-        names = Array(requirement_names).compact.uniq
-        return "" if names.empty?
+      def render_dependency_details(bundle_origins, requirement_names, added_on)
+        required_by = dependency_origin_items(bundle_origins)
+        requires = Array(requirement_names).compact.uniq.map { |name| internal_gem_link(name) }
+        added_markup = render_added_on(added_on)
+        return "" if required_by.empty? && requires.empty? && added_markup.empty?
 
-        items = names.map { |name| "<li>#{internal_gem_link(name)}</li>" }.join
         <<~HTML
-          <div class="detail-origin">
-            <strong>Requires</strong>
+          <details class="detail-disclosure">
+            <summary><span class="detail-disclosure-caret" aria-hidden="true"></span><h3>Details</h3></summary>
+            <div class="detail-disclosure-panel">
+              #{added_markup}
+              #{render_dependency_popover_section("Required by", required_by)}
+              #{render_dependency_popover_section("Requires", requires)}
+            </div>
+          </details>
+        HTML
+      end
+
+      def render_dependency_popover_section(title, items)
+        return "" if items.empty?
+
+        list_items = items.map { |item| "<li>#{item}</li>" }.join
+        <<~HTML
+          <section class="detail-info-section">
+            <strong>#{h(title)}</strong>
             <ul class="detail-origin-list">
-              #{items}
+              #{list_items}
             </ul>
-          </div>
+          </section>
         HTML
       end
 
@@ -554,9 +571,7 @@ module Gemstar
         %(<a href="#{h(href)}" data-gem-link-inline="true">#{h(name)}</a>)
       end
 
-      def render_detail_revision_panel
-        groups = grouped_change_sections(@selected_gem)
-
+      def render_detail_revision_panel(groups)
         <<~HTML
           <section class="revision-panel">
             #{render_revision_group("Latest", groups[:latest], empty_message: nil) if groups[:latest].any?}
@@ -762,6 +777,8 @@ module Gemstar
           '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 .8 1.2 6.3v8.9h4.3V10h5v5.2h4.3V6.3L8 .8Zm5.2 13.3h-1.8V8.9H4.6v5.2H2.8V6.8L8 2.6l5.2 4.2v7.3Z"/></svg>'
         when :rubygems
           '<svg viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="2.6" fill="#fff"/><path fill="#111" d="m8 2.35 4.55 2.63v5.24L8 12.85l-4.55-2.63V4.98L8 2.35Zm0 1.3L4.58 5.62v3.96L8 11.55l3.42-1.97V5.62L8 3.65Zm0 1.07 2.5 1.44v2.88L8 10.48 5.5 9.04V6.16L8 4.72Z"/></svg>'
+        when :info
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="4.5" r="0.9" fill="currentColor"/><path d="M8 7v4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>'
         else
           '<svg viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="2.6" fill="#fff"/><path fill="#111" d="m8 2.35 4.55 2.63v5.24L8 12.85l-4.55-2.63V4.98L8 2.35Zm0 1.3L4.58 5.62v3.96L8 11.55l3.42-1.97V5.62L8 3.65Zm0 1.07 2.5 1.44v2.88L8 10.48 5.5 9.04V6.16L8 4.72Z"/></svg>'
         end
