@@ -4,7 +4,7 @@ require "digest"
 
 module Gemstar
   class Cache
-    MAX_CACHE_AGE = 60 * 60 * 24 * 7 # 1 week
+    MAX_CACHE_AGE = 60 * 60 * 24 # 1 day
     CACHE_DIR = File.join(Gemstar::Config.home_directory, "cache")
 
     @@initialized = false
