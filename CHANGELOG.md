@@ -1,6 +1,13 @@
 # Change Log
 
-## Unreleased
+## 1.0.2
+
+- General server performance improvements.
+- Server: Required by / Requires / date added information now hidden in a "Details" section by default.
+- Server: Improve color hilighting in gems list.
+- Server: Improve up/down/left/right arrow key navigation.
+- Fix problem not fetching new changelogs due to extraneous caching.
+- Fix `nil.include?` error fetching changelogs for gems without either `homepage_uri` or `source_code_uri`.
 
 ## 1.0.1
 
