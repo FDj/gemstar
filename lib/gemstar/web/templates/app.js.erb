@@ -9,6 +9,9 @@
   let detailPanel = document.querySelector("[data-detail-panel]");
   const gemLinks = Array.from(document.querySelectorAll("[data-gem-link]"));
   let detailPollTimer = null;
+  let detailLoadingTimer = null;
+  let detailRequestToken = 0;
+  let activeDetailUrl = detailPanel ? detailPanel.dataset.detailUrl : null;
   let currentFilter = <%= selected_filter_json %>;
   let currentSearch = "";
   const emptyDetailHtml = <%= empty_detail_html_json %>;
@@ -21,6 +24,14 @@
     });
   };
   const requestedGemName = () => new URL(window.location.href).searchParams.get("gem");
+  const isSidebarFocused = () => document.activeElement === sidebarPanel;
+  const isDetailFocused = () => detailPanel && document.activeElement === detailPanel;
+  const focusSidebar = () => {
+    if (sidebarPanel) sidebarPanel.focus({ preventScroll: true });
+  };
+  const focusDetail = () => {
+    if (detailPanel) detailPanel.focus({ preventScroll: true });
+  };
 
   const applyGemFilter = (filter) => {
     currentFilter = filter;
@@ -78,9 +89,14 @@
 
   const replaceDetail = (html) => {
     if (!detailPanel) return;
+    const shouldRestoreDetailFocus = isDetailFocused();
     detailPanel.outerHTML = html;
     detailPanel = document.querySelector("[data-detail-panel]");
     if (detailPanel) detailPanel.scrollTop = 0;
+    activeDetailUrl = detailPanel ? detailPanel.dataset.detailUrl : null;
+    if (shouldRestoreDetailFocus) {
+      focusDetail();
+    }
     scheduleDetailPoll();
   };
 
@@ -91,10 +107,37 @@
     }
   };
 
+  const stopDetailLoading = () => {
+    if (detailLoadingTimer) {
+      clearTimeout(detailLoadingTimer);
+      detailLoadingTimer = null;
+    }
+  };
+
+  const loadingDetailHtml = (url) => `
+    <section class="detail" data-detail-panel tabindex="0" data-detail-pending="false" data-detail-url="${url}">
+      <div class="detail-loading-shell" aria-hidden="true">
+        <div class="detail-loading-spinner"></div>
+      </div>
+    </section>
+  `;
+
   const fetchDetail = (url, pushHistory = true) => {
+    const normalizedUrl = new URL(url, window.location.origin).toString();
+    const requestToken = ++detailRequestToken;
+    activeDetailUrl = normalizedUrl;
+    stopDetailLoading();
+    detailLoadingTimer = setTimeout(() => {
+      if (requestToken !== detailRequestToken || normalizedUrl !== activeDetailUrl) return;
+      replaceDetail(loadingDetailHtml(normalizedUrl));
+    }, 1000);
+
     fetch(url, { headers: { "X-Requested-With": "gemstar-detail" } })
       .then((response) => response.text())
       .then((html) => {
+        stopDetailLoading();
+        if (requestToken !== detailRequestToken || normalizedUrl !== activeDetailUrl) return;
+
         replaceDetail(html);
         if (pushHistory) {
           const pageUrl = new URL(window.location.href);
@@ -105,24 +148,28 @@
         }
         const detailUrl = new URL(url, window.location.origin);
         syncSidebarSelection(detailUrl.searchParams.get("gem"));
+      })
+      .catch(() => {
+        stopDetailLoading();
       });
   };
 
   const activateGemLink = (link, pushHistory = true, keepVisible = false) => {
     if (!link) return;
 
+    stopDetailPoll();
+    stopDetailLoading();
     syncSidebarSelection(link.dataset.gemName, keepVisible);
     fetchDetail(link.dataset.detailUrl || link.href, pushHistory);
 
-    if (sidebarPanel) {
-      sidebarPanel.focus({ preventScroll: true });
-    }
+    focusSidebar();
   };
 
   const scheduleDetailPoll = () => {
     stopDetailPoll();
     if (!detailPanel || detailPanel.dataset.detailPending !== "true") return;
     detailPollTimer = setTimeout(() => {
+      if (!detailPanel || !detailPanel.dataset.detailUrl) return;
       fetchDetail(detailPanel.dataset.detailUrl, false);
     }, 1000);
   };
@@ -204,6 +251,39 @@
   document.addEventListener("keydown", (event) => {
     const tagName = document.activeElement && document.activeElement.tagName;
     if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") return;
+
+    if (event.key === "ArrowRight" && isSidebarFocused()) {
+      event.preventDefault();
+      focusDetail();
+      return;
+    }
+
+    if (event.key === "ArrowLeft" && isDetailFocused()) {
+      event.preventDefault();
+      focusSidebar();
+      return;
+    }
+
+    if (isDetailFocused()) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        detailPanel.scrollBy({ top: 80, behavior: "auto" });
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        detailPanel.scrollBy({ top: -80, behavior: "auto" });
+      }
+      return;
+    }
+
+    if (!isSidebarFocused()) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        focusSidebar();
+      }
+      return;
+    }
+
     const links = visibleGemLinks();
     if (!links.length) return;
 
