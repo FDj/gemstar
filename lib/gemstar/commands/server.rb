@@ -8,6 +8,7 @@ module Gemstar
       DEFAULT_PORT = 2112
       RELOAD_ENV_VAR = "GEMSTAR_RELOAD_ACTIVE"
       RELOAD_GLOB = "{lib/**/*.rb,lib/gemstar/web/templates/**/*,bin/gemstar,README.md}"
+      RELOAD_DIRS = %w[lib bin].freeze
 
       attr_reader :bind
       attr_reader :port
@@ -71,7 +72,7 @@ module Gemstar
         end
 
         puts "Starting gemstar server in reload mode..."
-        puts "Watching changes matching #{RELOAD_GLOB.inspect}"
+        puts "Watching directories #{RELOAD_DIRS.join(", ")} with glob #{RELOAD_GLOB.inspect}"
 
         env = ENV.to_h.merge(RELOAD_ENV_VAR => "1")
         exec env, *rerun_command(rerun_executable)
@@ -86,12 +87,35 @@ module Gemstar
       def rerun_command(rerun_executable)
         [
           rerun_executable,
+          "--dir",
+          RELOAD_DIRS.join(","),
           "--pattern",
           RELOAD_GLOB,
+          "--signal",
+          "INT,KILL",
+          "--wait",
+          "1",
+          "--name",
+          "Gemstar",
+          "--background",
           "--",
-          Gem.ruby,
-          File.expand_path($PROGRAM_NAME)
-        ] + server_arguments_without_reload
+          *server_runner_command,
+          *server_arguments_without_reload
+        ]
+      end
+
+      def server_runner_command
+        return %w[bundle exec gemstar] if ENV["BUNDLE_GEMFILE"]
+
+        repo_executable = File.expand_path("../../../bin/gemstar", __dir__)
+        return [repo_executable] if File.exist?(repo_executable)
+
+        gem_executable = Gem.bin_path("gemstar", "gemstar")
+        return [gem_executable] if gem_executable
+
+        ["gemstar"]
+      rescue Gem::Exception
+        ["gemstar"]
       end
 
       def server_arguments_without_reload
