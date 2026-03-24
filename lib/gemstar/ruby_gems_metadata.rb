@@ -43,7 +43,7 @@ module Gemstar
 
                if uri.nil?
                  uri = resolved_meta["homepage_uri"]
-                 if uri.include?("github.com")
+                 if uri&.include?("github.com")
                    uri = uri[%r{http[s?]://github\.com/[^/]+/[^/]+}]
                  end
                end
