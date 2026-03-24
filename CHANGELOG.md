@@ -8,6 +8,7 @@
 - Server: Improve up/down/left/right arrow key navigation.
 - Fix problem not fetching new changelogs due to extraneous caching.
 - Fix `nil.include?` error fetching changelogs for gems without either `homepage_uri` or `source_code_uri`.
+- Add gem-release as a development dependency. 
 
 ## 1.0.1
 

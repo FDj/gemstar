@@ -31,6 +31,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency "rake", "~> 13.0"
   s.add_development_dependency "minitest", "~> 5.0"
   s.add_development_dependency "rerun", "~> 0.14"
+  s.add_development_dependency "gem-release", "~> 2.2.4"
 
   s.add_dependency "kramdown", "~> 2.0"
   s.add_dependency "kramdown-parser-gfm", "~> 1.0"
