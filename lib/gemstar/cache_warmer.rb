@@ -59,6 +59,12 @@ module Gemstar
       @condition.broadcast
     end
 
+    def pending?(gem_name)
+      @mutex.synchronize do
+        @queued.include?(gem_name) || @in_progress.include?(gem_name)
+      end
+    end
+
     private
 
     def start_workers_unlocked

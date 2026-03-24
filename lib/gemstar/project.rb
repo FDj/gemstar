@@ -26,6 +26,10 @@ module Gemstar
       @directory = File.dirname(@gemfile_path)
       @lockfile_path = File.join(@directory, "Gemfile.lock")
       @name = File.basename(@directory)
+      @lockfile_cache = {}
+      @gem_states_cache = {}
+      @gem_added_on_cache = {}
+      @history_cache = {}
     end
 
     def git_repo
@@ -84,7 +88,9 @@ module Gemstar
     end
 
     def lockfile_for_revision(revision_id)
-      return current_lockfile if revision_id.nil? || revision_id == "worktree"
+      cache_key = revision_id || "worktree"
+      return @lockfile_cache[cache_key] if @lockfile_cache.key?(cache_key)
+      return @lockfile_cache[cache_key] = current_lockfile if revision_id.nil? || revision_id == "worktree"
       return nil unless lockfile?
 
       relative_lockfile_path = git_repo.relative_path(lockfile_path)
@@ -93,16 +99,19 @@ module Gemstar
       content = git_repo.try_git_command(["show", "#{revision_id}:#{relative_lockfile_path}"])
       return nil if content.nil? || content.empty?
 
-      Gemstar::LockFile.new(content: content)
+      @lockfile_cache[cache_key] = Gemstar::LockFile.new(content: content)
     end
 
     def gem_states(from_revision_id: default_from_revision_id, to_revision_id: "worktree")
+      cache_key = [from_revision_id, to_revision_id]
+      return @gem_states_cache[cache_key] if @gem_states_cache.key?(cache_key)
+
       from_lockfile = lockfile_for_revision(from_revision_id)
       to_lockfile = lockfile_for_revision(to_revision_id)
       from_specs = from_lockfile&.specs || {}
       to_specs = to_lockfile&.specs || {}
 
-      (from_specs.keys | to_specs.keys).map do |gem_name|
+      @gem_states_cache[cache_key] = (from_specs.keys | to_specs.keys).map do |gem_name|
         old_version = from_specs[gem_name]
         new_version = to_specs[gem_name]
         bundle_origins = to_lockfile&.origins_for(gem_name) || []
@@ -120,23 +129,25 @@ module Gemstar
     end
 
     def gem_added_on(gem_name, revision_id: "worktree")
+      cache_key = [gem_name, revision_id]
+      return @gem_added_on_cache[cache_key] if @gem_added_on_cache.key?(cache_key)
       return nil unless lockfile?
 
       target_lockfile = lockfile_for_revision(revision_id)
-      return nil unless target_lockfile&.specs&.key?(gem_name)
+      return @gem_added_on_cache[cache_key] = nil unless target_lockfile&.specs&.key?(gem_name)
 
       relative_path = git_repo.relative_path(lockfile_path)
-      return nil if relative_path.nil?
+      return @gem_added_on_cache[cache_key] = nil if relative_path.nil?
 
       first_seen_revision = history_for_paths([relative_path], limit: nil, reverse: true).find do |revision|
         lockfile = lockfile_for_revision(revision[:id])
         lockfile&.specs&.key?(gem_name)
       end
 
-      return worktree_added_on_info if first_seen_revision.nil? && revision_id == "worktree"
-      return nil unless first_seen_revision
+      return @gem_added_on_cache[cache_key] = worktree_added_on_info if first_seen_revision.nil? && revision_id == "worktree"
+      return @gem_added_on_cache[cache_key] = nil unless first_seen_revision
 
-      {
+      @gem_added_on_cache[cache_key] = {
         project_name: name,
         date: first_seen_revision[:authored_at].strftime("%Y-%m-%d"),
         revision: first_seen_revision[:short_sha],
@@ -162,10 +173,13 @@ module Gemstar
       return [] if git_root.nil? || git_root.empty?
       return [] if paths.empty?
 
+      cache_key = [paths.sort, limit, reverse]
+      return @history_cache[cache_key] if @history_cache.key?(cache_key)
+
       output = git_repo.log_for_paths(paths, limit: limit, reverse: reverse)
       return [] if output.nil? || output.empty?
 
-      output.lines.filter_map do |line|
+      @history_cache[cache_key] = output.lines.filter_map do |line|
         full_sha, short_sha, authored_at, subject = line.strip.split("\u001f", 4)
         next if full_sha.nil?
 

@@ -16,12 +16,12 @@ module Gemstar
       @@initialized = true
     end
 
-    def self.fetch(key, &block)
+    def self.fetch(key, force: false, &block)
       init
 
       path = path_for(key)
 
-      if fresh?(path)
+      if !force && fresh?(path)
         content = File.read(path)
         return nil if content == "__404__"
         return content

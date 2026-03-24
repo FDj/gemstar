@@ -10,14 +10,14 @@ module Gemstar
 
     attr_reader :gem_name
 
-    def meta(cache_only: false)
+    def meta(cache_only: false, force_refresh: false)
       return @meta if !cache_only && defined?(@meta)
 
       json = if cache_only
         Cache.peek("rubygems-#{gem_name}")
       else
         url = "https://rubygems.org/api/v1/gems/#{URI.encode_www_form_component(gem_name)}.json"
-        Cache.fetch("rubygems-#{gem_name}") do
+        Cache.fetch("rubygems-#{gem_name}", force: force_refresh) do
           URI.open(url).read
         end
       end
@@ -32,8 +32,8 @@ module Gemstar
       parsed
     end
 
-    def repo_uri(cache_only: false)
-      resolved_meta = meta(cache_only: cache_only)
+    def repo_uri(cache_only: false, force_refresh: false)
+      resolved_meta = meta(cache_only: cache_only, force_refresh: force_refresh)
       return nil unless resolved_meta
 
       return @repo_uri if !cache_only && defined?(@repo_uri)

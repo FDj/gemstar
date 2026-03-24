@@ -12,12 +12,18 @@ end
 module Gemstar
   module Web
     class App < Roda
+      MISSING_METADATA = Object.new
+
       class << self
         def build(projects:, config_home:, cache_warmer: nil)
           Class.new(self) do
             opts[:projects] = projects
             opts[:config_home] = config_home
             opts[:cache_warmer] = cache_warmer
+            opts[:change_sections_cache] = {}
+            opts[:detail_html_cache] = {}
+            opts[:detail_request_cache] = {}
+            opts[:metadata_cache] = {}
           end.freeze.app
         end
       end
@@ -26,7 +32,7 @@ module Gemstar
         @projects = self.class.opts.fetch(:projects)
         @config_home = self.class.opts.fetch(:config_home)
         @cache_warmer = self.class.opts[:cache_warmer]
-        @metadata_cache = {}
+        @metadata_cache = self.class.opts[:metadata_cache]
         apply_no_cache_headers!
 
         r.root do
@@ -39,9 +45,17 @@ module Gemstar
         end
 
         r.get "detail" do
+          request_cache_key = detail_request_cache_key(r.params)
+          request_cache = self.class.opts[:detail_request_cache]
+          if request_cache_key && request_cache.key?(request_cache_key)
+            next request_cache[request_cache_key]
+          end
+
           load_state(r.params)
           prioritize_selected_gem
-          render_detail
+          detail_html = render_detail
+          request_cache[request_cache_key] = detail_html if request_cache_key
+          detail_html
         end
 
         r.get "gemfile" do
@@ -65,6 +79,28 @@ module Gemstar
         response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response["Pragma"] = "no-cache"
         response["Expires"] = "0"
+      end
+
+      def detail_request_cache_key(params)
+        project_index = selected_project_index(params["project"])
+        project = @projects[project_index]
+        return nil unless project
+
+        lockfile_stamp =
+          if File.file?(project.lockfile_path)
+            File.mtime(project.lockfile_path).to_i
+          else
+            0
+          end
+
+        [
+          project_index,
+          params["from"],
+          params["to"],
+          params["filter"],
+          params["gem"],
+          lockfile_stamp
+        ]
       end
 
       def page_title
@@ -385,21 +421,38 @@ module Gemstar
       def render_detail
         return empty_detail_html unless @selected_gem
 
-        metadata = metadata_for(@selected_gem[:name])
-        detail_pending = detail_pending?(@selected_gem[:name], metadata)
+        cache_key = [
+          @selected_project_index,
+          @selected_from_revision_id,
+          @selected_to_revision_id,
+          @selected_filter,
+          @selected_gem[:name],
+          @selected_gem[:old_version],
+          @selected_gem[:new_version],
+          @selected_gem[:status]
+        ]
+        detail_cache = self.class.opts[:detail_html_cache]
+        return detail_cache[cache_key] if detail_cache.key?(cache_key)
 
-        <<~HTML
-          <section class="detail" data-detail-panel data-detail-pending="#{detail_pending}" data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, gem: @selected_gem[:name]))}">
+        metadata = metadata_for(@selected_gem[:name], refresh_if_missing: true)
+        groups = grouped_change_sections(@selected_gem)
+        detail_pending = detail_pending?(@selected_gem[:name], metadata, groups)
+
+        detail_html = <<~HTML
+          <section class="detail" data-detail-panel tabindex="0" data-detail-pending="#{detail_pending}" data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, gem: @selected_gem[:name]))}">
             #{render_detail_hero(metadata)}
             #{render_detail_loading_notice if detail_pending}
-            #{render_detail_revision_panel}
+            #{render_detail_revision_panel(groups)}
           </section>
         HTML
+
+        detail_cache[cache_key] = detail_html unless detail_pending
+        detail_html
       end
 
       def empty_detail_html
         <<~HTML
-          <section class="detail" data-detail-panel>
+          <section class="detail" data-detail-panel tabindex="0">
             <div class="empty-panel">
               <h2>No gem selected</h2>
               <p>Choose a gem from the list to inspect its current version and changelog revisions.</p>
@@ -454,7 +507,7 @@ module Gemstar
         HTML
       end
 
-      def render_dependency_origins(bundle_origins)
+      def dependency_origin_items(bundle_origins)
         origins = Array(bundle_origins).filter_map do |origin|
           path = Array(origin[:path]).compact
           display_path = path.dup
@@ -465,17 +518,6 @@ module Gemstar
           linked_path = linked_gem_chain(["Gemfile", *display_path])
           origin[:type] == :direct ? gemfile_link("Gemfile") : linked_path
         end.uniq
-        return "" if origins.empty?
-
-        items = origins.map { |origin| "<li>#{origin}</li>" }.join
-        <<~HTML
-          <div class="detail-origin">
-            <strong>Required by</strong>
-            <ul class="detail-origin-list">
-              #{items}
-            </ul>
-          </div>
-        HTML
       end
 
       def render_detail_links(metadata)
@@ -576,7 +618,7 @@ module Gemstar
           <section class="revision-panel">
             #{render_revision_group("Latest", groups[:latest], empty_message: nil) if groups[:latest].any?}
             #{render_revision_group(current_section_title, groups[:current], empty_message: "No changelog entries in this revision range.")}
-            #{render_revision_group("Previous changes", groups[:previous], empty_message: nil) if groups[:previous].any?}
+            #{render_revision_group("Earlier changes", groups[:previous], empty_message: nil) if groups[:previous].any?}
           </section>
         HTML
       end
@@ -652,11 +694,15 @@ module Gemstar
       end
 
       def change_sections(gem_state)
+        cache_key = [gem_state[:name], gem_state[:old_version], gem_state[:new_version], gem_state[:status]]
+        change_sections_cache = self.class.opts[:change_sections_cache]
+        return change_sections_cache[cache_key] if change_sections_cache.key?(cache_key)
+
         return [] if gem_state[:new_version].nil? && gem_state[:old_version].nil?
 
         metadata = Gemstar::RubyGemsMetadata.new(gem_state[:name])
-        sections = Gemstar::ChangeLog.new(metadata).sections(cache_only: true)
-        return [] if sections.nil? || sections.empty?
+        sections = resolved_sections(metadata, gem_state)
+        return change_sections_cache[cache_key] = [] if sections.nil? || sections.empty?
 
         current_version = gem_state[:new_version] || gem_state[:old_version]
         previous_version = gem_state[:old_version]
@@ -675,9 +721,43 @@ module Gemstar
           }
         end
 
-        rendered_sections.sort_by { |section| section_sort_key(section) }
+        change_sections_cache[cache_key] = rendered_sections.sort_by { |section| section_sort_key(section) }
       rescue StandardError
         []
+      end
+
+      def resolved_sections(metadata, gem_state)
+        changelog = Gemstar::ChangeLog.new(metadata)
+        cached_sections = changelog.sections(cache_only: true) || {}
+        return cached_sections unless selected_gem_requires_refresh?(gem_state, cached_sections)
+
+        @metadata_cache.delete(gem_state[:name])
+        metadata.meta(cache_only: false, force_refresh: true)
+        metadata.repo_uri(cache_only: false, force_refresh: true)
+        Gemstar::ChangeLog.new(metadata).sections(cache_only: false, force_refresh: true) || cached_sections
+      end
+
+      def selected_gem_requires_refresh?(gem_state, cached_sections)
+        return false unless @selected_gem && gem_state[:name] == @selected_gem[:name]
+
+        bundled_version = gem_state[:new_version] || gem_state[:old_version]
+        return false if bundled_version.nil?
+        metadata = metadata_for(gem_state[:name]) || {}
+        has_upstream_release_source =
+          !metadata["changelog_uri"].to_s.empty? ||
+          !metadata["source_code_uri"].to_s.empty? ||
+          !metadata["homepage_uri"].to_s.empty?
+        return false unless has_upstream_release_source
+        return true if cached_sections.nil? || cached_sections.empty?
+
+        cached_versions = cached_sections.keys
+        return true unless cached_versions.include?(bundled_version)
+
+        compare_versions(bundled_version, newest_version(cached_versions)) == 1
+      end
+
+      def newest_version(versions)
+        Array(versions).max { |left, right| compare_versions(left, right) }
       end
 
       def section_kind(version, previous_version, current_version, status)
@@ -751,14 +831,25 @@ module Gemstar
         left.to_s <=> right.to_s
       end
 
-      def metadata_for(gem_name)
-        @metadata_cache[gem_name] ||= Gemstar::RubyGemsMetadata.new(gem_name).meta(cache_only: true)
+      def metadata_for(gem_name, refresh_if_missing: false)
+        cached = @metadata_cache[gem_name]
+        return nil if cached.equal?(MISSING_METADATA)
+        return cached if cached
+
+        metadata = Gemstar::RubyGemsMetadata.new(gem_name).meta(cache_only: true)
+        if metadata.nil? && refresh_if_missing
+          metadata = Gemstar::RubyGemsMetadata.new(gem_name).meta(cache_only: false, force_refresh: true)
+        end
+
+        @metadata_cache[gem_name] = metadata || MISSING_METADATA
+        metadata
       rescue StandardError
+        @metadata_cache[gem_name] = MISSING_METADATA
         nil
       end
 
-      def detail_pending?(gem_name, metadata)
-        metadata.nil? && change_sections({ name: gem_name, old_version: @selected_gem[:old_version], new_version: @selected_gem[:new_version], status: @selected_gem[:status] }).empty?
+      def detail_pending?(gem_name, metadata, groups)
+        false
       end
 
       def icon_button(label, url, icon_type:)
@@ -829,11 +920,25 @@ module Gemstar
         return nil if previous_sections.any? { |section| section[:version] == version }
         return nil if latest_sections.any? { |section| section[:version] == version }
 
+        metadata = metadata_for(gem_state[:name]) || {}
         repo_url = Gemstar::RubyGemsMetadata.new(gem_state[:name]).repo_uri(cache_only: true)
-        repo_link = if repo_url.to_s.empty?
-          "the gem repository"
+        fallback_url =
+          if !repo_url.to_s.empty?
+            repo_url
+          elsif metadata["project_uri"]
+            metadata["project_uri"]
+          else
+            metadata["documentation_uri"]
+          end
+        fallback_label = if repo_url.to_s.empty?
+          metadata["project_uri"] ? "the RubyGems page" : "the gem documentation"
         else
-          %(<a href="#{h(repo_url)}" target="_blank" rel="noreferrer">the gem repository</a>)
+          "the gem repository"
+        end
+        fallback_link = if fallback_url.to_s.empty?
+          fallback_label
+        else
+          %(<a href="#{h(fallback_url)}" target="_blank" rel="noreferrer">#{h(fallback_label)}</a>)
         end
 
         {
@@ -841,7 +946,7 @@ module Gemstar
           title: version,
           kind: :current,
           previous_version: fallback_previous_version_for(gem_state, previous_sections),
-          html: "<p>No release information available. Check #{repo_link} for more information.</p>"
+          html: "<p>No release information available. Check #{fallback_link} for more information.</p>"
         }
       end
 

@@ -10,21 +10,21 @@ module Gemstar
 
     attr_reader :metadata
 
-    def content(cache_only: false)
+    def content(cache_only: false, force_refresh: false)
       return @content if !cache_only && defined?(@content)
 
-      result = fetch_changelog_content(cache_only: cache_only)
+      result = fetch_changelog_content(cache_only: cache_only, force_refresh: force_refresh)
       @content = result unless cache_only
       result
     end
 
-    def sections(cache_only: false)
+    def sections(cache_only: false, force_refresh: false)
       return @sections if !cache_only && defined?(@sections)
 
       result = begin
-        s = parse_changelog_sections(cache_only: cache_only)
+        s = parse_changelog_sections(cache_only: cache_only, force_refresh: force_refresh)
         if s.nil? || s.empty?
-          s = parse_github_release_sections(cache_only: cache_only)
+          s = parse_github_release_sections(cache_only: cache_only, force_refresh: force_refresh)
         end
 
         pp @@candidates_found if Gemstar.debug? && !cache_only
@@ -74,10 +74,10 @@ module Gemstar
       nil
     end
 
-    def changelog_uri_candidates(cache_only: false)
+    def changelog_uri_candidates(cache_only: false, force_refresh: false)
       candidates = []
 
-      repo_uri = @metadata.repo_uri(cache_only: cache_only)
+      repo_uri = @metadata.repo_uri(cache_only: cache_only, force_refresh: force_refresh)
       return [] if repo_uri.nil? || repo_uri.empty?
 
       if repo_uri =~ %r{https://github\.com/aws/aws-sdk-ruby}
@@ -100,14 +100,14 @@ module Gemstar
 
       remote_repository = RemoteRepository.new(base)
 
-      branches = aws_style ? [""] : remote_repository.find_main_branch
+      branches = aws_style ? [""] : remote_repository.find_main_branch(cache_only: cache_only, force_refresh: force_refresh)
 
       candidates += paths.product(branches).map do |file, branch|
         uri = aws_style ? "#{base}/#{file}" : "#{base}/#{branch}/#{file}"
       end
 
       # Add the gem's changelog_uri last as it's usually not the most parsable:
-      meta = @metadata.meta(cache_only: cache_only)
+      meta = @metadata.meta(cache_only: cache_only, force_refresh: force_refresh)
       candidates += [Gemstar::GitHub::github_blob_to_raw(meta["changelog_uri"])] if meta
 
       candidates.flatten!
@@ -117,14 +117,14 @@ module Gemstar
       candidates
     end
 
-    def fetch_changelog_content(cache_only: false)
+    def fetch_changelog_content(cache_only: false, force_refresh: false)
       content = nil
 
-      changelog_uri_candidates(cache_only: cache_only).find do |candidate|
+      changelog_uri_candidates(cache_only: cache_only, force_refresh: force_refresh).find do |candidate|
         content = if cache_only
           Cache.peek("changelog-#{candidate}")
         else
-          Cache.fetch("changelog-#{candidate}") do
+          Cache.fetch("changelog-#{candidate}", force: force_refresh) do
             URI.open(candidate, read_timeout: 8)&.read
           rescue => e
             puts "#{candidate}: #{e}" if Gemstar.debug?
@@ -152,11 +152,11 @@ module Gemstar
       /^\s*(?:[-*]\s+)?(?:Version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])(?:\s*[-(].*)?/i
     ]
 
-    def parse_changelog_sections(cache_only: false)
+    def parse_changelog_sections(cache_only: false, force_refresh: false)
       # If the fetched content looks like a GitHub Releases HTML page, return {}
       # so that the GitHub releases scraper can handle it. This avoids
       # accidentally parsing HTML from /releases pages as a markdown changelog.
-      c = content(cache_only: cache_only)
+      c = content(cache_only: cache_only, force_refresh: force_refresh)
       return {} if c.nil? || c.strip.empty?
       if (c.include?("<html") || c.include?("<!DOCTYPE html")) &&
          (c.include?('data-test-selector="body-content"') || c.include?("/releases/tag/"))
@@ -212,14 +212,14 @@ module Gemstar
       sections
     end
 
-    def parse_github_release_sections(cache_only: false)
+    def parse_github_release_sections(cache_only: false, force_refresh: false)
       begin
         require "nokogiri"
       rescue LoadError
         return {}
       end
 
-      repo_uri = @metadata&.repo_uri(cache_only: cache_only)
+      repo_uri = @metadata&.repo_uri(cache_only: cache_only, force_refresh: force_refresh)
       return {} unless repo_uri&.include?("github.com")
 
       url = github_releases_url(repo_uri)
@@ -228,9 +228,9 @@ module Gemstar
       html = if cache_only
         Cache.peek("releases-#{url}")
       else
-        Cache.fetch("releases-#{url}") do
-          begin
-            URI.open(url, read_timeout: 8)&.read
+          Cache.fetch("releases-#{url}", force: force_refresh) do
+            begin
+              URI.open(url, read_timeout: 8)&.read
           rescue => e
             puts "#{url}: #{e}" if Gemstar.debug?
             nil
