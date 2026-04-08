@@ -1,9 +1,18 @@
 # Change Log
 
+## 1.0.4
+
+- Server: Improve layout, detail panel state management, and initial gem selection
+- Server: Gem details now in collapsible panel
+- Server: Arrow left/right navigation improved
+- Enhance changelog parsing with GitHub tag and release support
+- Extend `LockFile` with dependency requirements, spec sources, and platform parsing
+- Refactor dependency processing to include platform and source details
+- Refactor changelog parsing to merge GitHub release and changelog sections
+
 ## 1.0.3
 
 - Load our own WEBrick to avoid conflicts with hosting puma.rb etc.
-- 
 
 ## 1.0.2
 
