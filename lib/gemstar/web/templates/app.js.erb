@@ -338,6 +338,14 @@
     }
 
     if (!isSidebarFocused()) {
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        focusSidebar();
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        focusDetail();
+      }
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         focusSidebar();
