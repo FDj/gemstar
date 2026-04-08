@@ -114,7 +114,8 @@ module Gemstar
       @gem_states_cache[cache_key] = (from_specs.keys | to_specs.keys).map do |gem_name|
         old_version = from_specs[gem_name]
         new_version = to_specs[gem_name]
-        bundle_origins = to_lockfile&.origins_for(gem_name) || []
+        effective_lockfile = new_version ? to_lockfile : from_lockfile
+        bundle_origins = effective_lockfile&.origins_for(gem_name) || []
 
         {
           name: gem_name,
@@ -122,6 +123,8 @@ module Gemstar
           new_version: new_version,
           status: gem_status(old_version, new_version),
           version_label: version_label(old_version, new_version),
+          platform: effective_lockfile&.platform_for(gem_name),
+          source: effective_lockfile&.source_for(gem_name),
           bundle_origins: bundle_origins,
           bundle_origin_labels: bundle_origin_labels(bundle_origins)
         }
@@ -233,7 +236,8 @@ module Gemstar
       Array(origins).map do |origin|
         next "Gemfile" if origin[:type] == :direct
 
-        ["Gemfile", *origin[:path]].join(" → ")
+        label = ["Gemfile", *origin[:path]].join(" → ")
+        origin[:requirement] ? "#{label} (#{origin[:requirement]})" : label
       end.compact.uniq
     end
 
