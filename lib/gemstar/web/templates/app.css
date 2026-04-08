@@ -52,9 +52,9 @@
         align-items: center;
         justify-content: space-between;
         gap: 0.6rem;
-        padding: 0.4rem 0.65rem;
-        border-bottom: 1px solid #ece8df;
-        background: #fff;
+        padding: 0.55rem 0.75rem;
+        border-bottom: 1px solid #e6d5c2;
+        background: #fbf1e4;
         position: sticky;
         top: 0;
         z-index: 2;
@@ -316,7 +316,7 @@
         font-weight: 600;
       }
       .detail {
-        padding: 0.5rem 0.8rem 0.5rem 0.5rem;
+        padding: 0.62rem 0.8rem 0.5rem 0.5rem;
         display: grid;
         gap: 0.45rem;
         align-content: start;
@@ -367,7 +367,7 @@
         flex: 0 0 auto;
       }
       .detail-disclosure {
-        margin-top: 0.2rem;
+        margin-top: 0.38rem;
         border: 1px solid #ece8df;
         border-radius: 0.3rem;
         background: #fff;
