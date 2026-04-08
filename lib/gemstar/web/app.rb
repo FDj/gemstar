@@ -227,7 +227,7 @@ module Gemstar
             </div>
             <div class="picker-row">
               <label class="picker picker-project">
-                <span class="picker-prefix">📁</span>
+                <span class="picker-prefix" data-text-label="true">Project:</span>
                 <select data-project-select>
                   #{project_options_html}
                   <option value="" disabled>────────</option>
@@ -516,7 +516,8 @@ module Gemstar
           next if origin[:type] != :direct && display_path.empty?
 
           linked_path = linked_gem_chain(["Gemfile", *display_path])
-          origin[:type] == :direct ? gemfile_link("Gemfile") : linked_path
+          label = origin[:type] == :direct ? gemfile_link("Gemfile") : linked_path
+          origin[:requirement] ? "#{label} (#{h(origin[:requirement])})" : label
         end.uniq
       end
 
@@ -540,14 +541,18 @@ module Gemstar
       def render_dependency_details(bundle_origins, requirement_names, added_on)
         required_by = dependency_origin_items(bundle_origins)
         requires = Array(requirement_names).compact.uniq.map { |name| internal_gem_link(name) }
+        platforms = selected_gem_platform_items
+        source_items = selected_gem_source_items
         added_markup = render_added_on(added_on)
-        return "" if required_by.empty? && requires.empty? && added_markup.empty?
+        return "" if required_by.empty? && requires.empty? && platforms.empty? && source_items.empty? && added_markup.empty?
 
         <<~HTML
           <details class="detail-disclosure">
             <summary><span class="detail-disclosure-caret" aria-hidden="true"></span><h3>Details</h3></summary>
             <div class="detail-disclosure-panel">
               #{added_markup}
+              #{render_dependency_popover_section("Platforms", platforms)}
+              #{render_dependency_popover_section("Source", source_items)}
               #{render_dependency_popover_section("Required by", required_by)}
               #{render_dependency_popover_section("Requires", requires)}
             </div>
@@ -582,6 +587,39 @@ module Gemstar
       def selected_gem_added_on
         revision_id = @selected_gem[:new_version] ? @selected_to_revision_id : @selected_from_revision_id
         @selected_project&.gem_added_on(@selected_gem[:name], revision_id: revision_id)
+      end
+
+      def selected_gem_platform_items
+        platform = @selected_gem[:platform]
+        return [] if platform.to_s.empty?
+
+        [h(platform)]
+      end
+
+      def selected_gem_source_items
+        source = @selected_gem[:source] || {}
+        source_type = source[:type]
+
+        case source_type
+        when :path
+          location = source[:path] || source[:remote]
+          return [] if location.to_s.empty?
+
+          ["Path (#{h(location)})"]
+        when :git
+          remote = source[:remote]
+          pieces = ["Git"]
+          pieces << h(remote) unless remote.to_s.empty?
+          pieces << "@#{h(source[:branch])}" if source[:branch]
+          pieces << "##{h(source[:tag])}" if source[:tag]
+          pieces << h(source[:revision].to_s[0, 8]) if source[:revision]
+          [pieces.join(" ")]
+        when :rubygems
+          remote = source[:remote]
+          [remote.to_s.empty? ? "RubyGems" : "RubyGems (#{h(remote)})"]
+        else
+          []
+        end
       end
 
       def linked_gem_chain(names)
