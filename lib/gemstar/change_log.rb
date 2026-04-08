@@ -23,19 +23,10 @@ module Gemstar
       return @sections if !cache_only && defined?(@sections)
 
       result = begin
-        s = if prefer_github_releases_first?(cache_only: cache_only, force_refresh: force_refresh)
-          parse_github_release_sections(cache_only: cache_only, force_refresh: force_refresh)
-        else
-          parse_changelog_sections(cache_only: cache_only, force_refresh: force_refresh)
-        end
+        changelog_sections = parse_changelog_sections(cache_only: cache_only, force_refresh: force_refresh) || {}
+        github_sections = parse_github_release_sections(cache_only: cache_only, force_refresh: force_refresh) || {}
 
-        if s.nil? || s.empty?
-          s = if prefer_github_releases_first?(cache_only: cache_only, force_refresh: force_refresh)
-            parse_changelog_sections(cache_only: cache_only, force_refresh: force_refresh)
-          else
-            parse_github_release_sections(cache_only: cache_only, force_refresh: force_refresh)
-          end
-        end
+        s = merge_section_sources(changelog_sections, github_sections)
 
         pp @@candidates_found if Gemstar.debug? && !cache_only
 
@@ -44,6 +35,13 @@ module Gemstar
 
       @sections = result unless cache_only
       result
+    end
+
+    def merge_section_sources(changelog_sections, github_sections)
+      return github_sections if changelog_sections.nil? || changelog_sections.empty?
+      return changelog_sections if github_sections.nil? || github_sections.empty?
+
+      github_sections.merge(changelog_sections)
     end
 
     def extract_relevant_sections(old_version, new_version)
