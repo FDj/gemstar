@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+require "cgi"
 
 module Gemstar
   class ChangeLog
@@ -22,9 +23,18 @@ module Gemstar
       return @sections if !cache_only && defined?(@sections)
 
       result = begin
-        s = parse_changelog_sections(cache_only: cache_only, force_refresh: force_refresh)
+        s = if prefer_github_releases_first?(cache_only: cache_only, force_refresh: force_refresh)
+          parse_github_release_sections(cache_only: cache_only, force_refresh: force_refresh)
+        else
+          parse_changelog_sections(cache_only: cache_only, force_refresh: force_refresh)
+        end
+
         if s.nil? || s.empty?
-          s = parse_github_release_sections(cache_only: cache_only, force_refresh: force_refresh)
+          s = if prefer_github_releases_first?(cache_only: cache_only, force_refresh: force_refresh)
+            parse_changelog_sections(cache_only: cache_only, force_refresh: force_refresh)
+          else
+            parse_github_release_sections(cache_only: cache_only, force_refresh: force_refresh)
+          end
         end
 
         pp @@candidates_found if Gemstar.debug? && !cache_only
@@ -294,6 +304,22 @@ module Gemstar
         end
       end
 
+      if sections.empty?
+        current_version = @metadata&.meta(cache_only: cache_only, force_refresh: force_refresh)&.dig("version")
+        current_release_sections = parse_specific_github_release_pages(
+          repo_uri,
+          current_version,
+          cache_only: cache_only,
+          force_refresh: force_refresh
+        )
+        tag_sections = parse_github_tag_sections(
+          repo_uri,
+          cache_only: cache_only,
+          force_refresh: force_refresh
+        )
+        sections = tag_sections.merge(current_release_sections)
+      end
+
       if Gemstar.debug?
         puts "parse_github_release_sections #{@metadata.gem_name}:"
         pp sections.keys
@@ -307,6 +333,198 @@ module Gemstar
       repo = repo_uri.chomp("/")
       return nil if repo.empty?
       "#{repo}/releases"
+    end
+
+    def github_tags_url(repo_uri = @metadata&.repo_uri)
+      return nil unless repo_uri
+      repo = repo_uri.chomp("/")
+      return nil if repo.empty?
+      "#{repo}/tags"
+    end
+
+    def parse_specific_github_release_pages(repo_uri, version, cache_only:, force_refresh:)
+      return {} unless repo_uri&.include?("github.com")
+      return {} if version.to_s.empty?
+
+      github_release_tag_urls(repo_uri, version).each do |url|
+        html = if cache_only
+          Cache.peek("releases-#{url}")
+        else
+          Cache.fetch("releases-#{url}", force: force_refresh) do
+            begin
+              URI.open(url, read_timeout: 8)&.read
+            rescue => e
+              puts "#{url}: #{e}" if Gemstar.debug?
+              nil
+            end
+          end
+        end
+
+        next if html.nil? || html.strip.empty?
+
+        section = parse_single_github_release_page(html, version)
+        return { version => section } if section
+      end
+
+      {}
+    end
+
+    def parse_github_tag_sections(repo_uri, cache_only:, force_refresh:)
+      return {} unless repo_uri&.include?("github.com")
+
+      url = github_tags_url(repo_uri)
+      return {} unless url
+
+      sections = {}
+      seen_urls = {}
+
+      while url && !seen_urls[url]
+        seen_urls[url] = true
+        html = if cache_only
+          Cache.peek("tags-#{url}")
+        else
+          Cache.fetch("tags-#{url}", force: force_refresh) do
+            begin
+              URI.open(url, read_timeout: 8)&.read
+            rescue => e
+              puts "#{url}: #{e}" if Gemstar.debug?
+              nil
+            end
+          end
+        end
+
+        break if html.nil? || html.strip.empty?
+
+        page_sections, next_url = parse_single_github_tags_page(html, repo_uri)
+        sections.merge!(page_sections) { |_version, existing, _new| existing }
+        url = next_url
+      end
+
+      sections.keys.each do |version|
+        specific_release = parse_specific_github_release_pages(
+          repo_uri,
+          version,
+          cache_only: cache_only,
+          force_refresh: force_refresh
+        )
+        next if specific_release.nil? || specific_release.empty?
+
+        sections[version] = specific_release[version] if specific_release[version]
+      end
+
+      sections
+    end
+
+    def parse_single_github_tags_page(html, repo_uri)
+      require "nokogiri"
+
+      doc = begin
+              Nokogiri::HTML5(html)
+            rescue => _
+              Nokogiri::HTML(html)
+            end
+
+      sections = {}
+      repo_path = URI(repo_uri).path
+      release_prefix = "#{repo_path}/releases/tag/"
+      tree_prefix = "#{repo_path}/tree/"
+
+      doc.css("a[href]").each do |link|
+        href = link["href"].to_s
+        tag_name =
+          if href.start_with?(release_prefix)
+            href.delete_prefix(release_prefix)
+          elsif href.start_with?(tree_prefix)
+            href.delete_prefix(tree_prefix)
+          end
+        next if tag_name.to_s.empty?
+
+        version = normalize_github_tag_version(tag_name)
+        next if version.to_s.empty?
+
+        sections[version] ||= [
+          "## #{version}\n",
+          "<p>No release information available. Check the release page for more information.</p>"
+        ]
+      end
+
+      next_href =
+        doc.at_css('a[rel="next"], a.next_page')&.[]("href") ||
+        doc.css("a[href]").find do |link|
+          href = link["href"].to_s
+          text = link.text.to_s.gsub(/\s+/, " ").strip
+          href.include?("/tags?after=") && text == "Next"
+        end&.[]("href")
+      next_url = if next_href && !next_href.empty?
+        URI.join(repo_uri, next_href).to_s
+      end
+
+      [sections, next_url]
+    rescue LoadError
+      [{}, nil]
+    end
+
+    def parse_single_github_release_page(html, version)
+      require "nokogiri"
+
+      doc = begin
+              Nokogiri::HTML5(html)
+            rescue => _
+              Nokogiri::HTML(html)
+            end
+
+      body = doc.at_css('[data-test-selector="body-content"] .markdown-body') ||
+             doc.at_css('[data-test-selector="body-content"]') ||
+             doc.at_css('.markdown-body')
+      if body
+        html_chunk = body.inner_html.to_s.strip
+        return ["## #{version}\n", html_chunk] unless html_chunk.empty?
+      end
+
+      title = doc.at_css("title")&.text.to_s.strip
+      synthetic_title = normalize_github_release_title(title, version)
+      return nil if synthetic_title.nil? || synthetic_title.empty?
+
+      ["## #{version}\n", "<p>#{CGI.escapeHTML(synthetic_title)}</p>"]
+    rescue LoadError
+      nil
+    end
+
+    def github_release_tag_urls(repo_url, version)
+      github_tag_candidates(version).map do |tag|
+        "#{repo_url}/releases/tag/#{tag}"
+      end.uniq
+    end
+
+    def github_tag_candidates(version)
+      raw = version.to_s
+      [raw, (raw.start_with?("v") ? raw : "v#{raw}")].uniq
+    end
+
+    def normalize_github_tag_version(tag_name)
+      decoded = URI.decode_www_form_component(tag_name.to_s.split("?").first.to_s)
+      match = decoded.match(/\Av?(\d[\w.\-]*)\z/i)
+      match && match[1]
+    end
+
+    def prefer_github_releases_first?(cache_only:, force_refresh:)
+      meta = @metadata.meta(cache_only: cache_only, force_refresh: force_refresh)
+      repo_uri = @metadata.repo_uri(cache_only: cache_only, force_refresh: force_refresh)
+
+      repo_uri.to_s.include?("github.com") && meta["changelog_uri"].to_s.empty?
+    rescue StandardError
+      false
+    end
+
+    def normalize_github_release_title(title, version)
+      return nil if title.to_s.empty?
+
+      cleaned = title.sub(/\s*·\s*[^·]+\s*·\s*GitHub\z/, "")
+      cleaned = cleaned.sub(/\ARelease\s+/, "")
+      cleaned = cleaned.strip
+      return nil if cleaned.empty? || cleaned == version.to_s
+
+      cleaned
     end
   end
 end
