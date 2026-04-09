@@ -1,3 +1,4 @@
+[![Hypercommit](https://img.shields.io/badge/Hypercommit-DB2475)](https://hypercommit.com/gemstar)
 [![Gem Version](https://badge.fury.io/rb/gemstar.svg)](https://rubygems.org/gems/gemstar)
 [![Build](https://github.com/FDj/gemstar/workflows/Build/badge.svg)](https://github.com/palkan/gemstar/actions)
 [![JRuby Build](https://github.com/FDj/gemstar/workflows/JRuby%20Build/badge.svg)](https://github.com/FDj/gemstar/actions)
