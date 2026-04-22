@@ -34,6 +34,12 @@ gemstar server
 
 By default, the server listens to http://127.0.0.1:2112/
 
+To open the root page in your browser after startup:
+
+```shell
+gemstar server --open
+```
+
 
 ### gemstar diff
 

@@ -210,6 +210,18 @@
         margin: 0.3rem 0 0;
         color: var(--muted);
       }
+      .detail-subtitle > :first-child {
+        margin-top: 0;
+      }
+      .detail-subtitle > :last-child {
+        margin-bottom: 0;
+      }
+      .detail-subtitle a[href] {
+        color: #2563c9;
+      }
+      .detail-subtitle a[href]:hover {
+        text-decoration: underline;
+      }
       .detail-origin {
         margin: 0;
         color: var(--ink);

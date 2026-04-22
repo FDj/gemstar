@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 require "cgi"
+require "json"
 
 module Gemstar
   class ChangeLog
@@ -20,21 +21,44 @@ module Gemstar
     end
 
     def sections(cache_only: false, force_refresh: false)
-      return @sections if !cache_only && defined?(@sections)
+      return @sections if !cache_only && defined?(@sections) && !force_refresh
 
-      result = begin
-        changelog_sections = parse_changelog_sections(cache_only: cache_only, force_refresh: force_refresh) || {}
-        github_sections = parse_github_release_sections(cache_only: cache_only, force_refresh: force_refresh) || {}
+      cache_key = "sections-#{@metadata.gem_name}"
+      serialized = if cache_only
+        Cache.peek(cache_key)
+      else
+        Cache.fetch(cache_key, force: force_refresh) do
+          JSON.generate(compute_sections(force_refresh: force_refresh))
+        end
+      end
 
-        s = merge_section_sources(changelog_sections, github_sections)
-
-        pp @@candidates_found if Gemstar.debug? && !cache_only
-
-        s
+      result = if serialized
+        decode_sections(serialized)
+      elsif cache_only
+        nil
+      else
+        compute_sections(force_refresh: force_refresh)
       end
 
       @sections = result unless cache_only
       result
+    end
+
+    def compute_sections(force_refresh: false)
+      changelog_sections = parse_changelog_sections(cache_only: false, force_refresh: force_refresh) || {}
+      github_sections = parse_github_release_sections(cache_only: false, force_refresh: force_refresh) || {}
+
+      sections = merge_section_sources(changelog_sections, github_sections)
+
+      pp @@candidates_found if Gemstar.debug?
+
+      sections
+    end
+
+    def decode_sections(serialized)
+      JSON.parse(serialized)
+    rescue JSON::ParserError
+      nil
     end
 
     def merge_section_sources(changelog_sections, github_sections)

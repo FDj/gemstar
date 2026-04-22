@@ -322,7 +322,7 @@ module Gemstar
             #{render_toolbar}
             <div class="workspace-body">
               #{render_sidebar}
-              #{render_detail}
+              #{render_initial_detail}
             </div>
           </main>
         HTML
@@ -367,7 +367,7 @@ module Gemstar
                 type="search"
                 class="gem-search"
                 data-gem-search
-                placeholder="Filter gems"
+                placeholder="Search"
                 autocomplete="off"
                 spellcheck="false"
               >
@@ -450,12 +450,32 @@ module Gemstar
         detail_html
       end
 
-      def empty_detail_html
+      def render_initial_detail
+        return empty_detail_html(loading: true) unless @selected_gem
+
+        detail_url = detail_query(
+          project: @selected_project_index,
+          from: @selected_from_revision_id,
+          to: @selected_to_revision_id,
+          filter: @selected_filter,
+          gem: @selected_gem[:name]
+        )
+
+        <<~HTML
+          <section class="detail" data-detail-panel tabindex="0" data-detail-pending="false" data-detail-deferred="true" data-detail-url="#{h(detail_url)}">
+            <div class="detail-loading-shell" aria-hidden="true">
+              <div class="detail-loading-spinner"></div>
+            </div>
+          </section>
+        HTML
+      end
+
+      def empty_detail_html(loading: false)
         <<~HTML
           <section class="detail" data-detail-panel tabindex="0">
             <div class="empty-panel">
-              <h2>No gem selected</h2>
-              <p>Choose a gem from the list to inspect its current version and changelog revisions.</p>
+              <h2>#{loading ? "Loading details" : "No gem selected"}</h2>
+              <p>#{loading ? "Preparing the selected gem details." : "Choose a gem from the list to inspect its current version and changelog revisions."}</p>
             </div>
           </section>
         HTML
@@ -484,11 +504,22 @@ module Gemstar
                 </div>
                 #{render_detail_links(metadata)}
               </div>
-              <p class="detail-subtitle">#{description ? h(description) : "Metadata will appear here when RubyGems information is available."}</p>
+              <div class="detail-subtitle">#{render_detail_subtitle(description)}</div>
               #{render_dependency_details(bundle_origins, requirement_names, added_on)}
             </div>
           </section>
         HTML
+      end
+
+      def render_detail_subtitle(description)
+        text = description.to_s.strip
+        return "<p>Metadata will appear here when RubyGems information is available.</p>" if text.empty?
+
+        options = { hard_wrap: false }
+        options[:input] = "GFM" if defined?(Kramdown::Parser::GFM)
+        with_external_links(Kramdown::Document.new(text, options).to_html)
+      rescue Kramdown::Error
+        "<p>#{h(text)}</p>"
       end
 
       def render_added_on(added_on)
@@ -836,7 +867,7 @@ module Gemstar
         return { title: heading_version.to_s, html: "<p>No changelog text available.</p>" } if text.strip.empty?
 
         if heading_version
-          text = text.sub(/\A\s*#+\s*v?#{Regexp.escape(heading_version)}\s*\n+/i, "")
+          text = strip_leading_version_heading(text, heading_version)
         end
 
         options = { hard_wrap: false }
@@ -861,6 +892,29 @@ module Gemstar
         end
 
         { title: title, html: fragment.to_html }
+      end
+
+      def strip_leading_version_heading(text, heading_version)
+        stripped = text.sub(/\A\s*#+\s*v?#{Regexp.escape(heading_version)}\s*\n+/i, "")
+        return strip_leading_hash_separator(stripped) unless stripped == text
+
+        lines = text.lines
+        return text if lines.empty?
+
+        first_line = lines.first.to_s
+        heading_like =
+          first_line.match?(/\A\s*v?#{Regexp.escape(heading_version)}\b/i) ||
+          first_line.match?(/\A\s*[\[(]?v?#{Regexp.escape(heading_version)}\b/i)
+
+        return text unless heading_like
+
+        remaining = lines.drop(1)
+        remaining.shift while remaining.first&.strip&.empty?
+        strip_leading_hash_separator(remaining.join)
+      end
+
+      def strip_leading_hash_separator(text)
+        text.sub(/\A\s*#{Regexp.escape("#")}{4,}\s*\n+/, "")
       end
 
       def compare_versions(left, right)

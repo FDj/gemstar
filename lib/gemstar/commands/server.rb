@@ -1,5 +1,6 @@
 require_relative "command"
 require "shellwords"
+require "rbconfig"
 
 module Gemstar
   module Commands
@@ -14,6 +15,7 @@ module Gemstar
       attr_reader :port
       attr_reader :project_inputs
       attr_reader :reload
+      attr_reader :open_browser
 
       def initialize(options)
         super
@@ -22,6 +24,7 @@ module Gemstar
         @port = (options[:port] || DEFAULT_PORT).to_i
         @project_inputs = normalize_project_inputs(options[:project])
         @reload = options[:reload]
+        @open_browser = options[:open]
       end
 
       def run
@@ -37,7 +40,7 @@ module Gemstar
 
         projects = load_projects
         log_loaded_projects(projects)
-        cache_warmer = start_background_cache_refresh(projects)
+        cache_warmer = build_cache_warmer
         app = Gemstar::Web::App.build(projects: projects, config_home: Gemstar::Config.home_directory, cache_warmer: cache_warmer)
         app = Gemstar::RequestLogger.new(app, io: $stderr) if debug_request_logging?
 
@@ -49,7 +52,8 @@ module Gemstar
           Host: bind,
           Port: port,
           AccessLog: [],
-          Logger: Gemstar::WEBrickLogger.new($stderr, WEBrick::BasicLog::INFO)
+          Logger: Gemstar::WEBrickLogger.new($stderr, WEBrick::BasicLog::INFO),
+          StartCallback: server_start_callback(projects, cache_warmer)
         )
       end
 
@@ -125,6 +129,7 @@ module Gemstar
           "--bind", bind,
           "--port", port.to_s
         ]
+        args << "--open" if open_browser
         project_inputs.each do |project|
           args << "--project"
           args << project
@@ -147,14 +152,66 @@ module Gemstar
         ENV["DEBUG"] == "1"
       end
 
-      def start_background_cache_refresh(projects)
+      def build_cache_warmer
+        Gemstar::CacheWarmer.new(io: $stderr, debug: debug_request_logging? || Gemstar.debug?, thread_count: 10)
+      end
+
+      def start_background_cache_refresh(projects, cache_warmer)
         gem_names = projects.flat_map do |project|
           project.current_lockfile&.specs&.keys || []
         end.uniq.sort
 
         return nil if gem_names.empty?
 
-        Gemstar::CacheWarmer.new(io: $stderr, debug: debug_request_logging? || Gemstar.debug?, thread_count: 10).enqueue_many(gem_names)
+        cache_warmer.enqueue_many(gem_names)
+      end
+
+      def server_start_callback(projects, cache_warmer)
+        proc do
+          Thread.new do
+            sleep 0.15
+            start_background_cache_refresh(projects, cache_warmer)
+            launch_browser
+          end
+        end
+      end
+
+      def launch_browser
+        return unless open_browser
+
+        command = browser_command(root_url)
+        return unless command
+
+        pid = spawn(*command, out: File::NULL, err: File::NULL)
+        Process.detach(pid)
+      rescue StandardError => e
+        warn "Could not open browser automatically: #{e.message}"
+      end
+
+      def browser_command(url)
+        host_os = RbConfig::CONFIG["host_os"].to_s
+
+        if host_os.include?("darwin")
+          [find_executable("open") || "/usr/bin/open", url]
+        elsif host_os.match?(/linux|bsd/)
+          executable = find_executable("xdg-open")
+          executable ? [executable, url] : nil
+        elsif host_os.match?(/mswin|mingw|cygwin/)
+          ["cmd", "/c", "start", "", url]
+        end
+      end
+
+      def find_executable(name)
+        ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).each do |directory|
+          candidate = File.join(directory, name)
+          return candidate if File.file?(candidate) && File.executable?(candidate)
+        end
+
+        nil
+      end
+
+      def root_url
+        "http://#{bind}:#{port}/"
       end
     end
   end

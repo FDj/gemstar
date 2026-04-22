@@ -25,6 +25,7 @@ module Gemstar
     method_option :port, type: :numeric, default: 2112, desc: "Port"
     method_option :project, type: :string, repeatable: true, desc: "Project directories or Gemfile paths"
     method_option :reload, type: :boolean, default: false, desc: "Restart automatically when files change"
+    method_option :open, type: :boolean, default: false, desc: "Open the server root in a browser after startup"
     def server
       Gemstar::Commands::Server.new(options).run
     end

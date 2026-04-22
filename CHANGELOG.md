@@ -1,5 +1,17 @@
 # Change Log
 
+## Unreleased
+
+- Server: Change launch behavior to more reliably start cache warmer at launch.
+- Server: Add --open option to open the server in a browser on launch.
+- Server: Defer initial detail rendering so the page becomes interactive sooner on startup
+- Server: Persist the Details disclosure state between gem views
+- Server: Continue background warming with cached parsed release sections, not just raw fetched pages
+- Server: Improve GitHub release discovery with direct tag-page fallback and paginated GitHub tags support
+- Server: Prefer real changelog file entries over GitHub-derived placeholders when both exist
+- Server: Short gem description now rendered as markdown (for minitest gem)
+- Server: Improve section parsing for simplecov and similar gems
+
 ## 1.0.4
 
 - Server: Improve layout, detail panel state management, and initial gem selection

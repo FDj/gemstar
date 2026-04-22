@@ -34,6 +34,7 @@
       return null;
     }
   };
+  const detailNeedsInitialFetch = () => detailPanel && detailPanel.dataset.detailDeferred === "true" && !!detailPanel.dataset.detailUrl;
   const isSidebarFocused = () => document.activeElement === sidebarPanel;
   const isDetailFocused = () => detailPanel && document.activeElement === detailPanel;
   const focusSidebar = () => {
@@ -93,7 +94,9 @@
 
     if (currentSelectedIndex() === -1) {
       clearSidebarSelection();
-      replaceDetail(emptyDetailHtml);
+      if (visibleGemLinks().length === 0) {
+        replaceDetail(emptyDetailHtml);
+      }
     }
   };
 
@@ -203,20 +206,27 @@
   };
 
   const ensureInitialGemSelection = () => {
-    if (requestedGemName()) return;
+    const requested = requestedGemName();
 
     const detailGemName = currentDetailGemName();
     const detailLink = detailGemName ? visibleGemLinks().find((link) => link.dataset.gemName === detailGemName) : null;
 
     if (detailLink) {
       syncSidebarSelection(detailGemName, true);
-      const pageUrl = new URL(window.location.href);
-      const detailUrl = new URL(detailLink.dataset.detailUrl || detailLink.href, window.location.origin);
-      pageUrl.search = detailUrl.search;
-      pageUrl.searchParams.set("filter", currentFilter);
-      window.history.replaceState({}, "", pageUrl);
+      if (!requested) {
+        const pageUrl = new URL(window.location.href);
+        const detailUrl = new URL(detailLink.dataset.detailUrl || detailLink.href, window.location.origin);
+        pageUrl.search = detailUrl.search;
+        pageUrl.searchParams.set("filter", currentFilter);
+        window.history.replaceState({}, "", pageUrl);
+      }
+      if (detailNeedsInitialFetch()) {
+        fetchDetail(detailLink.dataset.detailUrl || detailLink.href, requested ? "none" : "replace");
+      }
       return;
     }
+
+    if (requested) return;
 
     const firstVisibleLink = visibleGemLinks()[0];
     if (firstVisibleLink) {
