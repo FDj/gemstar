@@ -243,6 +243,8 @@ module Gemstar
       js_states = (from_js_specs.keys | to_js_specs.keys).map do |package_name|
         old_target = from_js_specs[package_name]
         new_target = to_js_specs[package_name]
+        old_source = from_importmap&.source_for(package_name) || {}
+        new_source = to_importmap&.source_for(package_name) || {}
         effective_importmap = new_target ? to_importmap : from_importmap
 
         {
@@ -250,10 +252,12 @@ module Gemstar
           package_scope: "js",
           package_type_label: "JS",
           package_source_file: :importmap,
-          old_version: old_target,
-          new_version: new_target,
+          old_version: js_package_version(old_source),
+          new_version: js_package_version(new_source),
+          raw_old_version: old_target,
+          raw_new_version: new_target,
           status: gem_status(old_target, new_target),
-          version_label: importmap_version_label(old_target, new_target),
+          version_label: js_version_label(old_target, new_target, old_source, new_source),
           platform: nil,
           source: effective_importmap&.source_for(package_name),
           bundle_origins: [],
@@ -407,6 +411,27 @@ module Gemstar
       return new_label.to_s if old_target == new_target
 
       "#{old_label} → #{new_label}"
+    end
+
+    def js_version_label(old_target, new_target, old_source, new_source)
+      old_label = js_version_label_part(old_target, old_source)
+      new_label = js_version_label_part(new_target, new_source)
+      return "new → #{new_label}" if old_target.nil? && !new_target.nil?
+      return "#{old_label} → removed" if !old_target.nil? && new_target.nil?
+      return new_label.to_s if old_target == new_target
+
+      "#{old_label} → #{new_label}"
+    end
+
+    def js_version_label_part(target, source)
+      version = js_package_version(source)
+      return version if version && !version.empty?
+
+      importmap_target_label(target)
+    end
+
+    def js_package_version(source)
+      source && source[:package_version].to_s.empty? ? nil : source&.dig(:package_version)
     end
 
     def importmap_target_label(target)

@@ -516,7 +516,7 @@ module Gemstar
         description = metadata&.dig("info")
         bundle_origins = Array(@selected_gem[:bundle_origins])
         requirement_names = selected_gem_requirements
-        bundled_version = @selected_gem[:new_version]
+        bundled_version = detail_bundled_version(metadata)
         added_on = selected_gem_added_on
         title_url = metadata&.dig("homepage_uri")
         title_url = repo_url_for(@selected_gem, metadata: metadata) if title_url.to_s.empty?
@@ -836,13 +836,13 @@ module Gemstar
         return change_sections_cache[cache_key] if change_sections_cache.key?(cache_key)
 
         return [] if gem_state[:new_version].nil? && gem_state[:old_version].nil?
-        return change_sections_cache[cache_key] = [] unless gem_state[:package_scope] == "gems"
-
-        metadata = Gemstar::RubyGemsMetadata.new(gem_state[:name])
+        metadata = metadata_adapter_for(gem_state)
+        return change_sections_cache[cache_key] = [] unless metadata
         sections = resolved_sections(metadata, gem_state)
         return change_sections_cache[cache_key] = [] if sections.nil? || sections.empty?
 
-        current_version = gem_state[:new_version] || gem_state[:old_version]
+        metadata_hash = metadata_for(gem_state) || {}
+        current_version = effective_package_version(gem_state, metadata_hash)
         previous_version = gem_state[:old_version]
 
         rendered_sections = sections.keys.filter_map do |version|
@@ -1002,6 +1002,10 @@ module Gemstar
 
         if package_state[:package_scope] != "gems"
           metadata = local_package_metadata(package_state)
+          adapter = metadata_adapter_for(package_state)
+          remote_metadata = adapter&.meta(cache_only: true)
+          remote_metadata = adapter&.meta(cache_only: false, force_refresh: true) if remote_metadata.nil? && refresh_if_missing
+          metadata = metadata.compact.merge(remote_metadata || {})
           @metadata_cache[cache_key] = metadata || MISSING_METADATA
           return metadata
         end
@@ -1048,9 +1052,32 @@ module Gemstar
 
       def repo_url_for(package_state, metadata: nil)
         return nil unless package_state
-        return package_state.dig(:source, :repo_url) if package_state[:package_scope] != "gems"
+        if package_state[:package_scope] != "gems"
+          url = package_state.dig(:source, :repo_url) || metadata&.dig("source_code_uri")
+          return normalize_repo_url(url)
+        end
 
-        Gemstar::RubyGemsMetadata.new(package_state[:name]).repo_uri(cache_only: true)
+        normalize_repo_url(Gemstar::RubyGemsMetadata.new(package_state[:name]).repo_uri(cache_only: true))
+      end
+
+      def normalize_repo_url(url)
+        value = url.to_s
+        return nil if value.empty?
+
+        value = value.sub(/\Agit\+/, "")
+        value = value.sub(/\Agit:\/\//, "https://")
+        value = value.gsub(/\.git\z/, "")
+        value
+      end
+
+      def metadata_adapter_for(package_state)
+        return Gemstar::RubyGemsMetadata.new(package_state[:name]) if package_state[:package_scope] == "gems"
+        return nil unless package_state[:package_scope] == "js"
+
+        package_name = package_state.dig(:source, :package_name) || package_state[:name]
+        return nil if package_name.to_s.empty?
+
+        Gemstar::NpmMetadata.new(package_name)
       end
 
       def absolute_url?(value)
@@ -1124,12 +1151,12 @@ module Gemstar
       end
 
       def fallback_current_section(gem_state, previous_sections, latest_sections)
-        version = gem_state[:new_version] || gem_state[:old_version]
+        metadata = metadata_for(gem_state) || {}
+        version = effective_package_version(gem_state, metadata)
         return nil if version.nil?
         return nil if previous_sections.any? { |section| section[:version] == version }
         return nil if latest_sections.any? { |section| section[:version] == version }
 
-        metadata = metadata_for(gem_state) || {}
         repo_url = repo_url_for(gem_state, metadata: metadata)
         fallback_url =
           if !repo_url.to_s.empty?
@@ -1172,6 +1199,16 @@ module Gemstar
         return previous_sections.first[:version] if previous_sections.any?
 
         nil
+      end
+
+      def detail_bundled_version(metadata)
+        effective_package_version(@selected_gem, metadata || {})
+      end
+
+      def effective_package_version(package_state, metadata)
+        package_state[:new_version] ||
+          package_state[:old_version] ||
+          (package_state[:package_scope] == "js" ? metadata["version"] : nil)
       end
 
       def github_compare_url(repo_url, previous_version, current_version)

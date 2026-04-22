@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- Server: Support JS packages in importmap.rb and package-lock.json
+### New Features
+- Server: Support **JavaScript packages** in importmap.rb and package-lock.json
+
+### Bug Fixes
 - Server: Change launch behavior to more reliably start cache warmer at launch.
 - Server: Add --open option to open the server in a browser on launch.
 - Server: Defer initial detail rendering so the page becomes interactive sooner on startup

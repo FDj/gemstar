@@ -23,7 +23,8 @@ module Gemstar
     def sections(cache_only: false, force_refresh: false)
       return @sections if !cache_only && defined?(@sections) && !force_refresh
 
-      cache_key = "sections-#{@metadata.gem_name}"
+      metadata_key = @metadata.respond_to?(:cache_key) ? @metadata.cache_key : @metadata.gem_name
+      cache_key = "sections-#{metadata_key}"
       serialized = if cache_only
         Cache.peek(cache_key)
       else
