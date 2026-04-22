@@ -17,6 +17,7 @@
   let currentPackageScope = <%= selected_package_scope_json %>;
   let currentSearch = "";
   const emptyDetailHtml = <%= empty_detail_html_json %>;
+  const packageCollectionLabel = <%= (@selected_project&.package_collection_label || "Packages").downcase.dump %>;
   const detailDisclosureStorageKey = "gemstar.detailDisclosureOpen";
 
   const visibleGemLinks = () => gemLinks.filter((link) => !link.hidden);
@@ -93,7 +94,7 @@
     });
 
     if (emptyGemList) {
-      const emptyMessage = searchTerm === "" ? "No updated gems in this revision range." : "No gems match this filter.";
+      const emptyMessage = searchTerm === "" ? `No updated ${packageCollectionLabel} in this revision range.` : `No ${packageCollectionLabel} match this filter.`;
       emptyGemList.hidden = visibleGemLinks().length !== 0;
       const text = emptyGemList.querySelector("p");
       if (text) text.textContent = emptyMessage;

@@ -86,12 +86,8 @@ module Gemstar
         project = @projects[project_index]
         return nil unless project
 
-        lockfile_stamp =
-          if File.file?(project.lockfile_path)
-            File.mtime(project.lockfile_path).to_i
-          else
-            0
-          end
+        lockfile_stamp = File.file?(project.lockfile_path) ? File.mtime(project.lockfile_path).to_i : 0
+        importmap_stamp = File.file?(project.importmap_path) ? File.mtime(project.importmap_path).to_i : 0
 
         [
           project_index,
@@ -100,7 +96,8 @@ module Gemstar
           params["filter"],
           params["scope"],
           params["gem"],
-          lockfile_stamp
+          lockfile_stamp,
+          importmap_stamp
         ]
       end
 
@@ -185,7 +182,8 @@ module Gemstar
       def selected_gem_state(raw_gem_name)
         return nil if @gem_states.empty?
 
-        exact_match = @gem_states.find { |gem| gem[:name] == raw_gem_name }
+        exact_match = @gem_states.find { |gem| gem[:name] == raw_gem_name && gem_visible_in_selected_scope?(gem) }
+        exact_match ||= @gem_states.find { |gem| gem[:name] == raw_gem_name }
         return exact_match if exact_match
 
         @gem_states.find { |gem| gem_visible_in_selected_filter?(gem) && gem[:status] != :unchanged } ||
@@ -464,7 +462,7 @@ module Gemstar
         detail_cache = self.class.opts[:detail_html_cache]
         return detail_cache[cache_key] if detail_cache.key?(cache_key)
 
-        metadata = metadata_for(@selected_gem[:name], refresh_if_missing: true)
+        metadata = metadata_for(@selected_gem, refresh_if_missing: true)
         groups = grouped_change_sections(@selected_gem)
         detail_pending = detail_pending?(@selected_gem[:name], metadata, groups)
 
@@ -519,7 +517,7 @@ module Gemstar
         bundled_version = @selected_gem[:new_version]
         added_on = selected_gem_added_on
         title_url = metadata&.dig("homepage_uri")
-        title_url = Gemstar::RubyGemsMetadata.new(@selected_gem[:name]).repo_uri(cache_only: true) if title_url.to_s.empty?
+        title_url = repo_url_for(@selected_gem, metadata: metadata) if title_url.to_s.empty?
         title_markup = if title_url.to_s.empty?
           h(@selected_gem[:name])
         else
@@ -544,7 +542,7 @@ module Gemstar
 
       def render_detail_subtitle(description)
         text = description.to_s.strip
-        return "<p>Metadata will appear here when RubyGems information is available.</p>" if text.empty?
+        return "<p>Metadata will appear here when package information is available.</p>" if text.empty?
 
         options = { hard_wrap: false }
         options[:input] = "GFM" if defined?(Kramdown::Parser::GFM)
@@ -584,12 +582,16 @@ module Gemstar
       end
 
       def render_detail_links(metadata)
-        repo_url = metadata ? Gemstar::RubyGemsMetadata.new(@selected_gem[:name]).repo_uri(cache_only: true) : nil
+        repo_url = repo_url_for(@selected_gem, metadata: metadata)
         homepage_url = metadata&.dig("homepage_uri")
-        rubygems_url = "https://rubygems.org/gems/#{URI.encode_www_form_component(@selected_gem[:name])}"
 
         buttons = []
-        buttons << icon_button("RubyGems", rubygems_url, icon_type: :rubygems)
+        if @selected_gem[:package_scope] == "gems"
+          rubygems_url = "https://rubygems.org/gems/#{URI.encode_www_form_component(@selected_gem[:name])}"
+          buttons << icon_button("RubyGems", rubygems_url, icon_type: :rubygems)
+        elsif homepage_url && !homepage_url.empty? && (!repo_url || homepage_url != repo_url)
+          buttons << icon_button("Source", homepage_url, icon_type: :home)
+        end
         buttons << icon_button("GitHub", repo_url, icon_type: :github) if repo_url && !repo_url.empty?
         buttons << icon_button("Homepage", homepage_url, icon_type: :home) if homepage_url && !homepage_url.empty?
 
@@ -637,6 +639,8 @@ module Gemstar
       end
 
       def selected_gem_requirements
+        return [] unless @selected_gem[:package_scope] == "gems"
+
         lockfile = if @selected_gem[:new_version]
           @selected_project&.lockfile_for_revision(@selected_to_revision_id)
         else
@@ -648,7 +652,7 @@ module Gemstar
 
       def selected_gem_added_on
         revision_id = @selected_gem[:new_version] ? @selected_to_revision_id : @selected_from_revision_id
-        @selected_project&.gem_added_on(@selected_gem[:name], revision_id: revision_id)
+        @selected_project&.package_added_on(@selected_gem[:name], package_scope: @selected_gem[:package_scope], revision_id: revision_id)
       end
 
       def selected_gem_platform_items
@@ -679,6 +683,9 @@ module Gemstar
         when :rubygems
           remote = source[:remote]
           [remote.to_s.empty? ? "RubyGems" : "RubyGems (#{h(remote)})"]
+        when :importmap
+          remote = source[:remote]
+          [remote.to_s.empty? ? "Importmap" : "Importmap (#{h(remote)})"]
         else
           []
         end
@@ -727,7 +734,7 @@ module Gemstar
       def render_detail_loading_notice
         <<~HTML
           <section class="empty-panel">
-            <p>Loading gem metadata and changelog in the background...</p>
+            <p>Loading package metadata and changelog in the background...</p>
           </section>
         HTML
       end
@@ -800,6 +807,7 @@ module Gemstar
         return change_sections_cache[cache_key] if change_sections_cache.key?(cache_key)
 
         return [] if gem_state[:new_version].nil? && gem_state[:old_version].nil?
+        return change_sections_cache[cache_key] = [] unless gem_state[:package_scope] == "gems"
 
         metadata = Gemstar::RubyGemsMetadata.new(gem_state[:name])
         sections = resolved_sections(metadata, gem_state)
@@ -832,7 +840,7 @@ module Gemstar
         cached_sections = changelog.sections(cache_only: true) || {}
         return cached_sections unless selected_gem_requires_refresh?(gem_state, cached_sections)
 
-        @metadata_cache.delete(gem_state[:name])
+        @metadata_cache.delete([gem_state[:package_scope], gem_state[:name]])
         metadata.meta(cache_only: false, force_refresh: true)
         metadata.repo_uri(cache_only: false, force_refresh: true)
         Gemstar::ChangeLog.new(metadata).sections(cache_only: false, force_refresh: true) || cached_sections
@@ -843,7 +851,7 @@ module Gemstar
 
         bundled_version = gem_state[:new_version] || gem_state[:old_version]
         return false if bundled_version.nil?
-        metadata = metadata_for(gem_state[:name]) || {}
+        metadata = metadata_for(gem_state) || {}
         has_upstream_release_source =
           !metadata["changelog_uri"].to_s.empty? ||
           !metadata["source_code_uri"].to_s.empty? ||
@@ -955,21 +963,53 @@ module Gemstar
         left.to_s <=> right.to_s
       end
 
-      def metadata_for(gem_name, refresh_if_missing: false)
-        cached = @metadata_cache[gem_name]
+      def metadata_for(package_state_or_name, refresh_if_missing: false)
+        package_state = package_state_or_name.is_a?(Hash) ? package_state_or_name : { name: package_state_or_name, package_scope: "gems" }
+        gem_name = package_state[:name]
+        cache_key = [package_state[:package_scope], gem_name]
+        cached = @metadata_cache[cache_key]
         return nil if cached.equal?(MISSING_METADATA)
         return cached if cached
+
+        if package_state[:package_scope] != "gems"
+          metadata = local_package_metadata(package_state)
+          @metadata_cache[cache_key] = metadata || MISSING_METADATA
+          return metadata
+        end
 
         metadata = Gemstar::RubyGemsMetadata.new(gem_name).meta(cache_only: true)
         if metadata.nil? && refresh_if_missing
           metadata = Gemstar::RubyGemsMetadata.new(gem_name).meta(cache_only: false, force_refresh: true)
         end
 
-        @metadata_cache[gem_name] = metadata || MISSING_METADATA
+        @metadata_cache[cache_key] = metadata || MISSING_METADATA
         metadata
       rescue StandardError
-        @metadata_cache[gem_name] = MISSING_METADATA
+        @metadata_cache[cache_key] = MISSING_METADATA
         nil
+      end
+
+      def local_package_metadata(package_state)
+        source = package_state[:source] || {}
+        remote = source[:remote].to_s
+        repo_url = source[:repo_url].to_s
+
+        {
+          "info" => "JavaScript package pinned in config/importmap.rb",
+          "homepage_uri" => absolute_url?(remote) ? remote : nil,
+          "source_code_uri" => repo_url.empty? ? nil : repo_url
+        }
+      end
+
+      def repo_url_for(package_state, metadata: nil)
+        return nil unless package_state
+        return package_state.dig(:source, :repo_url) if package_state[:package_scope] != "gems"
+
+        Gemstar::RubyGemsMetadata.new(package_state[:name]).repo_uri(cache_only: true)
+      end
+
+      def absolute_url?(value)
+        value.to_s.match?(%r{\Ahttps?://}i)
       end
 
       def detail_pending?(gem_name, metadata, groups)
@@ -1026,7 +1066,7 @@ module Gemstar
       end
 
       def revision_card_links(section)
-        repo_url = Gemstar::RubyGemsMetadata.new(@selected_gem[:name]).repo_uri(cache_only: true)
+        repo_url = repo_url_for(@selected_gem)
         return [] if repo_url.to_s.empty?
 
         links = []
@@ -1044,20 +1084,28 @@ module Gemstar
         return nil if previous_sections.any? { |section| section[:version] == version }
         return nil if latest_sections.any? { |section| section[:version] == version }
 
-        metadata = metadata_for(gem_state[:name]) || {}
-        repo_url = Gemstar::RubyGemsMetadata.new(gem_state[:name]).repo_uri(cache_only: true)
+        metadata = metadata_for(gem_state) || {}
+        repo_url = repo_url_for(gem_state, metadata: metadata)
         fallback_url =
           if !repo_url.to_s.empty?
             repo_url
           elsif metadata["project_uri"]
             metadata["project_uri"]
+          elsif metadata["source_code_uri"]
+            metadata["source_code_uri"]
+          elsif metadata["homepage_uri"]
+            metadata["homepage_uri"]
           else
             metadata["documentation_uri"]
           end
         fallback_label = if repo_url.to_s.empty?
-          metadata["project_uri"] ? "the RubyGems page" : "the gem documentation"
+          if gem_state[:package_scope] == "gems"
+            metadata["project_uri"] ? "the RubyGems page" : "the gem documentation"
+          else
+            fallback_url == metadata["documentation_uri"] ? "the package documentation" : "the package source"
+          end
         else
-          "the gem repository"
+          gem_state[:package_scope] == "gems" ? "the gem repository" : "the package repository"
         end
         fallback_link = if fallback_url.to_s.empty?
           fallback_label
