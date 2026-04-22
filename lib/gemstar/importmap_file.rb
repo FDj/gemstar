@@ -30,13 +30,48 @@ module Gemstar
         pins[name] = Pin.new(
           name: name,
           target: target,
-          source: {
-            type: :importmap,
-            remote: target,
-            repo_url: github_repo_url_for(target)
-          }
+          source: build_source_for(target)
         )
       end
+    end
+
+    def build_source_for(target)
+      {
+        type: :importmap,
+        remote: target
+      }.merge(cdn_package_metadata_for(target)).merge(repo_source_for(target))
+    end
+
+    def cdn_package_metadata_for(target)
+      value = target.to_s
+      return {} if value.empty?
+
+      package_name, package_version =
+        case value
+        when %r{\Ahttps://esm\.sh/((?:@[^/]+/)?[^@/?]+)@([^/?]+)}
+          [Regexp.last_match(1), Regexp.last_match(2)]
+        when %r{\Ahttps://ga\.jspm\.io/npm:((?:@[^/]+/)?[^@/]+)@([^/]+)/}
+          [Regexp.last_match(1), Regexp.last_match(2)]
+        when %r{\Ahttps://cdn\.jsdelivr\.net/npm/((?:@[^/]+/)?[^@/]+)@([^/]+)/}
+          [Regexp.last_match(1), Regexp.last_match(2)]
+        when %r{\Ahttps://unpkg\.com/((?:@[^/]+/)?[^@/?]+)@([^/?]+)}
+          [Regexp.last_match(1), Regexp.last_match(2)]
+        else
+          [nil, nil]
+        end
+
+      return {} unless package_name
+
+      {
+        package_name: package_name,
+        package_version: package_version,
+        registry_url: "https://www.npmjs.com/package/#{package_name}"
+      }
+    end
+
+    def repo_source_for(target)
+      repo_url = github_repo_url_for(target)
+      repo_url ? { repo_url: repo_url } : {}
     end
 
     def github_repo_url_for(target)

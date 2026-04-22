@@ -685,7 +685,19 @@ module Gemstar
           [remote.to_s.empty? ? "RubyGems" : "RubyGems (#{h(remote)})"]
         when :importmap
           remote = source[:remote]
-          [remote.to_s.empty? ? "Importmap" : "Importmap (#{h(remote)})"]
+          package_name = source[:package_name]
+          package_version = source[:package_version]
+          label =
+            if package_name && package_version
+              "Importmap (#{h(package_name)} @ #{h(package_version)})"
+            elsif package_name
+              "Importmap (#{h(package_name)})"
+            elsif remote.to_s.empty?
+              "Importmap"
+            else
+              "Importmap (#{h(remote)})"
+            end
+          [label]
         else
           []
         end
@@ -993,9 +1005,20 @@ module Gemstar
         source = package_state[:source] || {}
         remote = source[:remote].to_s
         repo_url = source[:repo_url].to_s
+        package_name = source[:package_name].to_s
+        package_version = source[:package_version].to_s
+        registry_url = source[:registry_url].to_s
+        info = if package_name.empty?
+          "JavaScript package pinned in config/importmap.rb"
+        elsif package_version.empty?
+          "JavaScript package `#{package_name}` pinned in config/importmap.rb"
+        else
+          "JavaScript package `#{package_name}` pinned to `#{package_version}` in config/importmap.rb"
+        end
 
         {
-          "info" => "JavaScript package pinned in config/importmap.rb",
+          "info" => info,
+          "project_uri" => registry_url.empty? ? nil : registry_url,
           "homepage_uri" => absolute_url?(remote) ? remote : nil,
           "source_code_uri" => repo_url.empty? ? nil : repo_url
         }
