@@ -47,7 +47,6 @@
 - Removed Railtie from this gem.
 - Improve how git root dir is determined.
 
-
 ## 0.0.2
 
 - Diff: Fix regex warnings shown in terminal.
