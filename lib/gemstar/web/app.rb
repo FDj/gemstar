@@ -62,7 +62,7 @@ module Gemstar
           project_index = selected_project_index(r.params["project"])
           project = @projects[project_index]
           response.status = 404
-          next "Gemfile not found" unless project && File.file?(project.gemfile_path)
+          next "Gemfile not found" unless project&.gemfile?
 
           response["Content-Type"] = "text/plain; charset=utf-8"
           File.read(project.gemfile_path)
@@ -88,6 +88,7 @@ module Gemstar
 
         lockfile_stamp = File.file?(project.lockfile_path) ? File.mtime(project.lockfile_path).to_i : 0
         importmap_stamp = File.file?(project.importmap_path) ? File.mtime(project.importmap_path).to_i : 0
+        package_lock_stamp = File.file?(project.package_lock_path) ? File.mtime(project.package_lock_path).to_i : 0
 
         [
           project_index,
@@ -97,7 +98,8 @@ module Gemstar
           params["scope"],
           params["gem"],
           lockfile_stamp,
-          importmap_stamp
+          importmap_stamp,
+          package_lock_stamp
         ]
       end
 
@@ -652,7 +654,12 @@ module Gemstar
 
       def selected_gem_added_on
         revision_id = @selected_gem[:new_version] ? @selected_to_revision_id : @selected_from_revision_id
-        @selected_project&.package_added_on(@selected_gem[:name], package_scope: @selected_gem[:package_scope], revision_id: revision_id)
+        @selected_project&.package_added_on(
+          @selected_gem[:name],
+          package_scope: @selected_gem[:package_scope],
+          source_file: @selected_gem[:package_source_file],
+          revision_id: revision_id
+        )
       end
 
       def selected_gem_platform_items
@@ -698,6 +705,16 @@ module Gemstar
               "Importmap (#{h(remote)})"
             end
           [label]
+        when :npm
+          remote = source[:remote]
+          registry_url = source[:registry_url]
+          if remote.to_s.empty? && registry_url.to_s.empty?
+            ["npm"]
+          elsif remote.to_s.empty?
+            ["npm (#{h(registry_url)})"]
+          else
+            ["npm (#{h(remote)})"]
+          end
         else
           []
         end
@@ -1008,8 +1025,13 @@ module Gemstar
         package_name = source[:package_name].to_s
         package_version = source[:package_version].to_s
         registry_url = source[:registry_url].to_s
+        package_name = package_state[:name].to_s if package_name.empty? && source[:type] == :npm
+        package_version = (package_state[:new_version] || package_state[:old_version]).to_s if package_version.empty? && source[:type] == :npm
+        registry_url = "https://www.npmjs.com/package/#{package_name}" if registry_url.empty? && !package_name.empty?
         info = if package_name.empty?
           "JavaScript package pinned in config/importmap.rb"
+        elsif source[:type] == :npm && !package_version.empty?
+          "JavaScript package `#{package_name}` locked to `#{package_version}` in package-lock.json"
         elsif package_version.empty?
           "JavaScript package `#{package_name}` pinned in config/importmap.rb"
         else
