@@ -24,7 +24,7 @@ module Gemstar
       return @sections if !cache_only && defined?(@sections) && !force_refresh
 
       metadata_key = @metadata.respond_to?(:cache_key) ? @metadata.cache_key : @metadata.gem_name
-      cache_key = "sections-#{metadata_key}"
+      cache_key = "sections-v2-#{metadata_key}"
       serialized = if cache_only
         Cache.peek(cache_key)
       else
@@ -515,18 +515,35 @@ module Gemstar
 
     def github_release_tag_urls(repo_url, version)
       github_tag_candidates(version).map do |tag|
-        "#{repo_url}/releases/tag/#{tag}"
+        encoded_tag = URI.encode_www_form_component(tag)
+        "#{repo_url}/releases/tag/#{encoded_tag}"
       end.uniq
     end
 
     def github_tag_candidates(version)
       raw = version.to_s
-      [raw, (raw.start_with?("v") ? raw : "v#{raw}")].uniq
+      candidates = [raw, (raw.start_with?("v") ? raw : "v#{raw}")]
+
+      if @metadata.is_a?(Gemstar::NpmMetadata)
+        package_name = @metadata.gem_name.to_s
+        unless package_name.empty?
+          candidates << "#{package_name}@#{raw}"
+          candidates << "#{package_name}@v#{raw}" unless raw.start_with?("v")
+
+          short_name = package_name.split("/").last
+          if short_name && short_name != package_name
+            candidates << "#{short_name}@#{raw}"
+            candidates << "#{short_name}@v#{raw}" unless raw.start_with?("v")
+          end
+        end
+      end
+
+      candidates.uniq
     end
 
     def normalize_github_tag_version(tag_name)
       decoded = URI.decode_www_form_component(tag_name.to_s.split("?").first.to_s)
-      match = decoded.match(/\Av?(\d[\w.\-]*)\z/i)
+      match = decoded.match(/\A(?:.+@)?v?(\d[\w.\-]*)\z/i)
       match && match[1]
     end
 

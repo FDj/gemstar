@@ -13,6 +13,7 @@ module Gemstar
   module Web
     class App < Roda
       MISSING_METADATA = Object.new
+      CACHE_VERSION = "v2"
 
       class << self
         def build(projects:, config_home:, cache_warmer: nil)
@@ -91,6 +92,7 @@ module Gemstar
         package_lock_stamp = File.file?(project.package_lock_path) ? File.mtime(project.package_lock_path).to_i : 0
 
         [
+          CACHE_VERSION,
           project_index,
           params["from"],
           params["to"],
@@ -450,21 +452,27 @@ module Gemstar
       def render_detail
         return empty_detail_html unless @selected_gem
 
+        metadata = metadata_for(@selected_gem, refresh_if_missing: true)
         cache_key = [
+          CACHE_VERSION,
           @selected_project_index,
           @selected_from_revision_id,
           @selected_to_revision_id,
           @selected_filter,
           @selected_package_scope,
           @selected_gem[:name],
+          @selected_gem[:package_scope],
+          @selected_gem[:package_source_file],
           @selected_gem[:old_version],
           @selected_gem[:new_version],
+          @selected_gem[:raw_old_version],
+          @selected_gem[:raw_new_version],
+          effective_package_version(@selected_gem, metadata || {}),
           @selected_gem[:status]
         ]
         detail_cache = self.class.opts[:detail_html_cache]
         return detail_cache[cache_key] if detail_cache.key?(cache_key)
 
-        metadata = metadata_for(@selected_gem, refresh_if_missing: true)
         groups = grouped_change_sections(@selected_gem)
         detail_pending = detail_pending?(@selected_gem[:name], metadata, groups)
 
@@ -831,18 +839,31 @@ module Gemstar
       end
 
       def change_sections(gem_state)
-        cache_key = [gem_state[:name], gem_state[:old_version], gem_state[:new_version], gem_state[:status]]
+        metadata_hash = metadata_for(gem_state) || {}
+        current_version = effective_package_version(gem_state, metadata_hash)
+        cache_key = [
+          CACHE_VERSION,
+          gem_state[:name],
+          gem_state[:package_scope],
+          gem_state[:package_source_file],
+          gem_state[:old_version],
+          gem_state[:new_version],
+          gem_state[:raw_old_version],
+          gem_state[:raw_new_version],
+          current_version,
+          gem_state[:status]
+        ]
         change_sections_cache = self.class.opts[:change_sections_cache]
         return change_sections_cache[cache_key] if change_sections_cache.key?(cache_key)
 
-        return [] if gem_state[:new_version].nil? && gem_state[:old_version].nil?
+        return [] if gem_state[:new_version].nil? &&
+          gem_state[:old_version].nil? &&
+          (current_version.nil? || current_version.to_s.empty?)
         metadata = metadata_adapter_for(gem_state)
         return change_sections_cache[cache_key] = [] unless metadata
         sections = resolved_sections(metadata, gem_state)
         return change_sections_cache[cache_key] = [] if sections.nil? || sections.empty?
 
-        metadata_hash = metadata_for(gem_state) || {}
-        current_version = effective_package_version(gem_state, metadata_hash)
         previous_version = gem_state[:old_version]
 
         rendered_sections = sections.keys.filter_map do |version|
@@ -878,9 +899,9 @@ module Gemstar
       def selected_gem_requires_refresh?(gem_state, cached_sections)
         return false unless @selected_gem && gem_state[:name] == @selected_gem[:name]
 
-        bundled_version = gem_state[:new_version] || gem_state[:old_version]
-        return false if bundled_version.nil?
         metadata = metadata_for(gem_state) || {}
+        bundled_version = effective_package_version(gem_state, metadata)
+        return false if bundled_version.nil? || bundled_version.to_s.empty?
         has_upstream_release_source =
           !metadata["changelog_uri"].to_s.empty? ||
           !metadata["source_code_uri"].to_s.empty? ||
@@ -901,6 +922,7 @@ module Gemstar
       def section_kind(version, previous_version, current_version, status)
         return :future if compare_versions(version, current_version) == 1
         return :current if status == :added && compare_versions(version, current_version) <= 0
+        return :current if previous_version.nil? && current_version && compare_versions(version, current_version) == 0
 
         lower_bound = previous_version || current_version
         if compare_versions(version, lower_bound) == 1 && compare_versions(version, current_version) <= 0
