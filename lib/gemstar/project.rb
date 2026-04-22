@@ -87,6 +87,23 @@ module Gemstar
         end
     end
 
+    def package_scopes
+      [:gems]
+    end
+
+    def package_scope_options
+      package_scopes.map do |scope|
+        {
+          id: package_scope_id(scope),
+          label: package_scope_label(scope)
+        }
+      end
+    end
+
+    def package_collection_label
+      package_scopes == [:gems] ? "Gems" : "Packages"
+    end
+
     def lockfile_for_revision(revision_id)
       cache_key = revision_id || "worktree"
       return @lockfile_cache[cache_key] if @lockfile_cache.key?(cache_key)
@@ -119,6 +136,8 @@ module Gemstar
 
         {
           name: gem_name,
+          package_scope: "gems",
+          package_type_label: "Gem",
           old_version: old_version,
           new_version: new_version,
           status: gem_status(old_version, new_version),
@@ -258,6 +277,24 @@ module Gemstar
       return nil unless repo_url&.include?("github.com")
 
       "#{repo_url}/commit/#{full_sha}"
+    end
+
+    def package_scope_id(scope)
+      case scope
+      when :gems then "gems"
+      when :js then "js"
+      when :python then "python"
+      else scope.to_s
+      end
+    end
+
+    def package_scope_label(scope)
+      case scope
+      when :gems then "Gems"
+      when :js then "JS"
+      when :python then "Python"
+      else scope.to_s.capitalize
+      end
     end
   end
 end

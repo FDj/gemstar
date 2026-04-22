@@ -98,6 +98,7 @@ module Gemstar
           params["from"],
           params["to"],
           params["filter"],
+          params["scope"],
           params["gem"],
           lockfile_stamp
         ]
@@ -118,6 +119,7 @@ module Gemstar
         @selected_to_revision_id = selected_to_revision_id(@selected_to_revision_id)
         @gem_states = @selected_project ? @selected_project.gem_states(from_revision_id: @selected_from_revision_id, to_revision_id: @selected_to_revision_id) : []
         @requested_gem_name = params["gem"]
+        @selected_package_scope = selected_package_scope(params["scope"], params["gem"])
         @selected_filter = selected_filter(params["filter"], params["gem"])
         @selected_gem = selected_gem_state(params["gem"])
       end
@@ -167,6 +169,19 @@ module Gemstar
         @gem_states.any? { |gem| gem[:status] != :unchanged } ? "updated" : "all"
       end
 
+      def selected_package_scope(raw_scope, raw_gem_name)
+        return "all" if @gem_states.empty?
+
+        available_scopes = available_package_scopes
+        default_scope = available_scopes == ["gems"] ? "gems" : "all"
+        return raw_scope if raw_scope == "all" || available_scopes.include?(raw_scope)
+
+        selected_gem = @gem_states.find { |gem| gem[:name] == raw_gem_name }
+        return selected_gem[:package_scope] if selected_gem
+
+        default_scope
+      end
+
       def selected_gem_state(raw_gem_name)
         return nil if @gem_states.empty?
 
@@ -180,9 +195,18 @@ module Gemstar
       end
 
       def gem_visible_in_selected_filter?(gem_state)
+        return false unless gem_visible_in_selected_scope?(gem_state)
         return true if @selected_filter != "updated"
 
         gem_state[:status] != :unchanged
+      end
+
+      def gem_visible_in_selected_scope?(gem_state)
+        @selected_package_scope == "all" || gem_state[:package_scope] == @selected_package_scope
+      end
+
+      def available_package_scopes
+        @selected_project ? @selected_project.package_scope_options.map { |option| option[:id] } : []
       end
 
       def render_shell
@@ -332,7 +356,7 @@ module Gemstar
         <<~HTML
           <section class="toolbar">
             <div class="toolbar-meta">
-              <strong>#{@gem_states.count}</strong> gems
+              <strong>#{@gem_states.count}</strong> #{h(@selected_project&.package_collection_label&.downcase || "packages")}
               <span>·</span>
               <strong>#{@gem_states.count { |gem| gem[:status] != :unchanged }}</strong> changes from #{h(selected_from_revision_label)} to #{h(selected_to_revision_label)}
             </div>
@@ -357,12 +381,13 @@ module Gemstar
           <aside class="sidebar" data-sidebar-panel tabindex="0">
             <div class="sidebar-header">
               <div class="sidebar-header-row">
-                <h2>Gems</h2>
+                <h2>#{h(@selected_project&.package_collection_label || "Packages")}</h2>
                 <div class="list-filters" data-list-filters>
                   <button type="button" class="list-filter-button#{' is-active' if @selected_filter == "updated"}" data-filter-button="updated">Updated</button>
                   <button type="button" class="list-filter-button#{' is-active' if @selected_filter == "all"}" data-filter-button="all">All</button>
                 </div>
               </div>
+              #{render_package_scope_filters}
               <input
                 type="search"
                 class="gem-search"
@@ -380,7 +405,7 @@ module Gemstar
       def render_gem_list
         return <<~HTML if @gem_states.empty?
           <section class="empty-panel">
-            <p>No gems found in the current lockfile.</p>
+            <p>No #{h(@selected_project&.package_collection_label&.downcase || "packages")} found in the current lockfile.</p>
           </section>
         HTML
 
@@ -388,19 +413,23 @@ module Gemstar
           selected = gem[:name] == @selected_gem[:name] ? " is-selected" : ""
           status_class = " status-#{gem[:status]}"
           updated = gem[:status] != :unchanged
-          hidden = @selected_filter == "updated" && !updated && gem[:name] != @requested_gem_name ? ' hidden="hidden"' : ""
+          hidden = (!gem_visible_in_selected_scope?(gem) || (@selected_filter == "updated" && !updated && gem[:name] != @requested_gem_name)) ? ' hidden="hidden"' : ""
           <<~HTML
             <a
               class="gem-row#{selected}#{status_class}"
-              href="#{project_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, gem: gem[:name])}"
+              href="#{project_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, gem: gem[:name])}"
               data-gem-link="true"
               data-gem-name="#{h(gem[:name])}"
               data-gem-updated="#{updated}"
-              data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, gem: gem[:name]))}"
+              data-package-scope="#{h(gem[:package_scope])}"
+              data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, gem: gem[:name]))}"
               #{hidden}
             >
               <span class="gem-name-row">
-                <span class="gem-name">#{h(gem[:name])}</span>
+                <span class="gem-name-lockup">
+                  <span class="gem-name">#{h(gem[:name])}</span>
+                  <span class="package-type-tag">#{h(gem[:package_type_label])}</span>
+                </span>
                 #{updated ? '<span class="gem-updated-dot" aria-label="Updated"></span>' : ""}
               </span>
               <span class="gem-version">#{h(gem[:version_label])}</span>
@@ -413,7 +442,7 @@ module Gemstar
             #{items}
           </nav>
           <section class="empty-panel gem-list-empty" data-gem-list-empty hidden="hidden">
-            <p>No updated gems in this revision range.</p>
+            <p>No updated #{h(@selected_project&.package_collection_label&.downcase || "packages")} in this revision range.</p>
           </section>
         HTML
       end
@@ -426,6 +455,7 @@ module Gemstar
           @selected_from_revision_id,
           @selected_to_revision_id,
           @selected_filter,
+          @selected_package_scope,
           @selected_gem[:name],
           @selected_gem[:old_version],
           @selected_gem[:new_version],
@@ -439,7 +469,7 @@ module Gemstar
         detail_pending = detail_pending?(@selected_gem[:name], metadata, groups)
 
         detail_html = <<~HTML
-          <section class="detail" data-detail-panel tabindex="0" data-detail-pending="#{detail_pending}" data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, gem: @selected_gem[:name]))}">
+          <section class="detail" data-detail-panel tabindex="0" data-detail-pending="#{detail_pending}" data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, gem: @selected_gem[:name]))}">
             #{render_detail_hero(metadata)}
             #{render_detail_loading_notice if detail_pending}
             #{render_detail_revision_panel(groups)}
@@ -458,6 +488,7 @@ module Gemstar
           from: @selected_from_revision_id,
           to: @selected_to_revision_id,
           filter: @selected_filter,
+          scope: @selected_package_scope,
           gem: @selected_gem[:name]
         )
 
@@ -676,6 +707,7 @@ module Gemstar
           from: @selected_from_revision_id,
           to: @selected_to_revision_id,
           filter: @selected_filter,
+          scope: @selected_package_scope,
           gem: name
         )
 
@@ -1078,16 +1110,17 @@ module Gemstar
         html
       end
 
-      def detail_query(project:, from:, to:, filter:, gem:)
-        "/detail?#{URI.encode_www_form(project: project, from: from, to: to, filter: filter, gem: gem)}"
+      def detail_query(project:, from:, to:, filter:, scope:, gem:)
+        "/detail?#{URI.encode_www_form(project: project, from: from, to: to, filter: filter, scope: scope, gem: gem)}"
       end
 
-      def project_query(project:, from:, to:, filter:, gem:)
+      def project_query(project:, from:, to:, filter:, scope:, gem:)
         params = {
           project: project,
           from: from,
           to: to,
           filter: filter,
+          scope: scope,
           gem: gem
         }.compact
 
@@ -1120,6 +1153,7 @@ module Gemstar
           "app.js.erb",
           empty_detail_html_json: empty_detail_html.dump,
           selected_filter_json: @selected_filter.dump,
+          selected_package_scope_json: @selected_package_scope.dump,
           selected_project_index: @selected_project_index || 0
         )
 
@@ -1144,6 +1178,24 @@ module Gemstar
 
       def h(value)
         CGI.escapeHTML(value.to_s)
+      end
+
+      def render_package_scope_filters
+        options = @selected_project&.package_scope_options || []
+        return "" if options.size <= 1
+
+        buttons = []
+        buttons << %(<button type="button" class="list-filter-button#{' is-active' if @selected_package_scope == "all"}" data-ecosystem-button="all">All</button>)
+
+        buttons.concat(options.map do |option|
+          %(<button type="button" class="list-filter-button#{' is-active' if @selected_package_scope == option[:id]}" data-ecosystem-button="#{h(option[:id])}">#{h(option[:label])}</button>)
+        end)
+
+        <<~HTML
+          <div class="list-filters list-filters-secondary" data-ecosystem-filters>
+            #{buttons.join}
+          </div>
+        HTML
       end
     end
   end
