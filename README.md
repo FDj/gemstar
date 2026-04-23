@@ -3,7 +3,7 @@
 [![JRuby Build](https://github.com/FDj/gemstar/workflows/JRuby%20Build/badge.svg)](https://github.com/FDj/gemstar/actions)
 
 # Gemstar
-A very preliminary gem to help you keep track of your gems.
+Helps you keep track of your gems and JavaScript packages.
 
 ## Installation
 
