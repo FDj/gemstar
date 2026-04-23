@@ -1,4 +1,5 @@
 require_relative "command"
+require "socket"
 require "shellwords"
 require "rbconfig"
 
@@ -16,11 +17,13 @@ module Gemstar
       attr_reader :project_inputs
       attr_reader :reload
       attr_reader :open_browser
+      attr_reader :explicit_port
 
       def initialize(options)
         super
 
         @bind = options[:bind] || DEFAULT_BIND
+        @explicit_port = !options[:port].nil?
         @port = (options[:port] || DEFAULT_PORT).to_i
         @project_inputs = normalize_project_inputs(options[:project])
         @reload = options[:reload]
@@ -37,6 +40,7 @@ module Gemstar
         require "gemstar/web/app"
 
         Gemstar::Config.ensure_home_directory!
+        @port = resolve_port
 
         projects = load_projects
         log_loaded_projects(projects)
@@ -126,9 +130,9 @@ module Gemstar
       def server_arguments_without_reload
         args = [
           "server",
-          "--bind", bind,
-          "--port", port.to_s
+          "--bind", bind
         ]
+        args += ["--port", port.to_s] if explicit_port
         args << "--open" if open_browser
         project_inputs.each do |project|
           args << "--project"
@@ -150,6 +154,28 @@ module Gemstar
 
       def debug_request_logging?
         ENV["DEBUG"] == "1"
+      end
+
+      def resolve_port
+        return port if explicit_port
+
+        find_available_port(starting_at: port)
+      end
+
+      def find_available_port(starting_at:, limit: 100)
+        starting_at.upto(starting_at + limit - 1) do |candidate|
+          return candidate if port_available?(candidate)
+        end
+
+        raise Thor::Error, "No available port found from #{starting_at} to #{starting_at + limit - 1}"
+      end
+
+      def port_available?(candidate)
+        server = TCPServer.new(bind, candidate)
+        server.close
+        true
+      rescue Errno::EADDRINUSE, Errno::EACCES, SocketError
+        false
       end
 
       def build_cache_warmer

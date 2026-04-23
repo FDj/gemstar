@@ -4,4 +4,8 @@
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 require_relative "../lib/gemstar"
 
-Gemstar::CLI.start(ARGV)
+if ARGV.empty?
+  Gemstar::Commands::Server.new(open: true).run
+else
+  Gemstar::CLI.start(ARGV)
+end

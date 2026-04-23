@@ -25,7 +25,7 @@ module Gemstar
 
     desc "server", "Start the interactive web server"
     method_option :bind, type: :string, default: "127.0.0.1", desc: "Bind address"
-    method_option :port, type: :numeric, default: 2112, desc: "Port"
+    method_option :port, type: :numeric, desc: "Port (default: 2112; auto-increments when omitted)"
     method_option :project, type: :string, repeatable: true, desc: "Project directories or Gemfile paths"
     method_option :reload, type: :boolean, default: false, desc: "Restart automatically when files change"
     method_option :open, type: :boolean, default: false, desc: "Open the server root in a browser after startup"

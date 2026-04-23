@@ -14,11 +14,16 @@
 - Server: Short gem description now rendered as markdown (for minitest gem).
 - Server: Improve section parsing for simplecov and similar gems.
 - Server: Increase limit for number of recent commits to show in menu to 100.
+- Server: Add page icon.
+- Server: Unless a port has been specified, server will now attempt binding from ports 2112 up.
 - Diff: Add **JavaScript package support.** Like with Server, this supports `importmap.rb` and `package-lock.json`.
 - Diff: Add `--ecosystem` parameter to choose js/gems/all.
 - Diff: Add `--project` directive to point at the project root to diff.
 - Diff: Add `--since` parameter to limit diff to commits since a specific date, e.g. `--since "3 weeks ago"`.
 - Diff: Add "file://" to generated report output to fix click-to-open in certain terminal apps.
+- Diff: Add list of considered git commits to diff report.
+- Special cases for specific packages now moved into json configuration files.
+- `gemstar` is now a shortcut for `gemstar server --open`.
 
 ## 1.0.4
 
