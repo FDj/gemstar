@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## 1.1
 
 - Server: Add **JavaScript package support** to browse change logs for your project's packages. This currently
   supports packages in `importmap.rb` and `package-lock.json`.
