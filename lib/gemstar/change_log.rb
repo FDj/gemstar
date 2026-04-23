@@ -24,7 +24,7 @@ module Gemstar
       return @sections if !cache_only && defined?(@sections) && !force_refresh
 
       metadata_key = @metadata.respond_to?(:cache_key) ? @metadata.cache_key : @metadata.gem_name
-      cache_key = "sections-v2-#{metadata_key}"
+      cache_key = "sections-v4-#{metadata_key}"
       serialized = if cache_only
         Cache.peek(cache_key)
       else
@@ -42,6 +42,36 @@ module Gemstar
       end
 
       @sections = result unless cache_only
+      result
+    end
+
+    def sections_for_versions(versions, cache_only: false, force_refresh: false)
+      requested_versions = normalize_requested_versions(versions)
+      return {} if requested_versions.empty?
+
+      cached_sections = sections(cache_only: true) || {}
+      result = cached_sections.select { |version, _| requested_versions.include?(normalize_version_key(version)) }
+      return result if cache_only
+
+      changelog_sections = parse_changelog_sections(cache_only: false, force_refresh: force_refresh) || {}
+      changelog_sections.each do |version, lines|
+        result[version] ||= lines if requested_versions.include?(normalize_version_key(version))
+      end
+
+      repo_uri = @metadata&.repo_uri(cache_only: false, force_refresh: force_refresh)
+      if repo_uri&.include?("github.com")
+        missing_versions = requested_versions - result.keys.map { |version| normalize_version_key(version) }
+        missing_versions.each do |version|
+          specific_release = parse_specific_github_release_pages(
+            repo_uri,
+            version,
+            cache_only: false,
+            force_refresh: force_refresh
+          )
+          result.merge!(specific_release) if specific_release
+        end
+      end
+
       result
     end
 
@@ -88,6 +118,17 @@ module Gemstar
     end
 
     private
+
+    def normalize_requested_versions(versions)
+      Array(versions).filter_map { |version| normalize_version_key(version) }.uniq
+    end
+
+    def normalize_version_key(version)
+      value = version.to_s.strip
+      return nil if value.empty?
+
+      value.sub(/\Av/i, "")
+    end
 
     # Extract a version token from a heading line, preferring explicit version forms
     # and avoiding returning a date string when both are present.
@@ -294,6 +335,7 @@ module Gemstar
         heading = sec.at_css('h2.sr-only')
         next unless heading
         text = heading.text.to_s.strip
+        next unless github_tag_matches_metadata?(text)
         next unless text[/v?(\d[\w.\-]+)/i]
         version = $1
 
@@ -317,6 +359,7 @@ module Gemstar
           link = container.at_xpath('ancestor::*[self::section or self::div][.//a[contains(@href, "/releases/tag/")]][1]//a[contains(@href, "/releases/tag/")]')
           text = link&.text.to_s
           text = File.basename(URI(link["href"]).path) if (text.nil? || text.empty?) && link
+          next unless github_tag_matches_metadata?(text)
           next unless text && text[/v?(\d[\w.\-]+)/i]
           version = $1
 
@@ -341,6 +384,13 @@ module Gemstar
           force_refresh: force_refresh
         )
         sections = tag_sections.merge(current_release_sections)
+      elsif @metadata.is_a?(Gemstar::NpmMetadata)
+        tag_sections = parse_github_tag_sections(
+          repo_uri,
+          cache_only: cache_only,
+          force_refresh: force_refresh
+        )
+        sections = tag_sections.merge(sections)
       end
 
       if Gemstar.debug?
@@ -461,6 +511,7 @@ module Gemstar
             href.delete_prefix(tree_prefix)
           end
         next if tag_name.to_s.empty?
+        next unless github_tag_matches_metadata?(tag_name)
 
         version = normalize_github_tag_version(tag_name)
         next if version.to_s.empty?
@@ -545,6 +596,26 @@ module Gemstar
       decoded = URI.decode_www_form_component(tag_name.to_s.split("?").first.to_s)
       match = decoded.match(/\A(?:.+@)?v?(\d[\w.\-]*)\z/i)
       match && match[1]
+    end
+
+    def github_tag_matches_metadata?(tag_name)
+      return true unless @metadata.is_a?(Gemstar::NpmMetadata)
+
+      decoded = URI.decode_www_form_component(tag_name.to_s.split("?").first.to_s)
+      package_name = @metadata.gem_name.to_s
+      return true if package_name.empty?
+
+      if decoded.include?("@")
+        prefix = decoded.sub(/@v?\d[\w.\-]*\z/i, "")
+        return true if prefix == package_name
+
+        short_name = package_name.split("/").last
+        return true if short_name && prefix == short_name
+
+        return false
+      end
+
+      true
     end
 
     def prefer_github_releases_first?(cache_only:, force_refresh:)
