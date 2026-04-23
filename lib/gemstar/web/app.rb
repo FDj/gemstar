@@ -13,7 +13,7 @@ module Gemstar
   module Web
     class App < Roda
       MISSING_METADATA = Object.new
-      CACHE_VERSION = "v2"
+      CACHE_VERSION = "v3"
 
       class << self
         def build(projects:, config_home:, cache_warmer: nil)
@@ -1051,11 +1051,16 @@ module Gemstar
         package_name = source[:package_name].to_s
         package_version = source[:package_version].to_s
         registry_url = source[:registry_url].to_s
+        provider_gem = source[:provider_gem].to_s
         package_name = package_state[:name].to_s if package_name.empty? && source[:type] == :npm
         package_version = (package_state[:new_version] || package_state[:old_version]).to_s if package_version.empty? && source[:type] == :npm
         registry_url = "https://www.npmjs.com/package/#{package_name}" if registry_url.empty? && !package_name.empty?
         info = if package_name.empty?
           "JavaScript package pinned in config/importmap.rb"
+        elsif !provider_gem.empty? && !package_version.empty?
+          "JavaScript package `#{package_name}` provided by the `#{provider_gem}` gem at version `#{package_version}`"
+        elsif !provider_gem.empty?
+          "JavaScript package `#{package_name}` provided by the `#{provider_gem}` gem"
         elsif source[:type] == :npm && !package_version.empty?
           "JavaScript package `#{package_name}` locked to `#{package_version}` in package-lock.json"
         elsif package_version.empty?
@@ -1095,6 +1100,9 @@ module Gemstar
       def metadata_adapter_for(package_state)
         return Gemstar::RubyGemsMetadata.new(package_state[:name]) if package_state[:package_scope] == "gems"
         return nil unless package_state[:package_scope] == "js"
+
+        provider_gem = package_state.dig(:source, :provider_gem)
+        return Gemstar::RubyGemsMetadata.new(provider_gem) unless provider_gem.to_s.empty?
 
         package_name = package_state.dig(:source, :package_name) || package_state[:name]
         return nil if package_name.to_s.empty?

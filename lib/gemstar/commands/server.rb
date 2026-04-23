@@ -157,13 +157,13 @@ module Gemstar
       end
 
       def start_background_cache_refresh(projects, cache_warmer)
-        gem_names = projects.flat_map do |project|
-          project.current_lockfile&.specs&.keys || []
-        end.uniq.sort
+        package_states = projects.flat_map do |project|
+          project.gem_states(from_revision_id: "worktree", to_revision_id: "worktree")
+        end
 
-        return nil if gem_names.empty?
+        return nil if package_states.empty?
 
-        cache_warmer.enqueue_many(gem_names)
+        cache_warmer.enqueue_many(package_states)
       end
 
       def server_start_callback(projects, cache_warmer)

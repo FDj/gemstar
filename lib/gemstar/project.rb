@@ -245,21 +245,27 @@ module Gemstar
         new_target = to_js_specs[package_name]
         old_source = from_importmap&.source_for(package_name) || {}
         new_source = to_importmap&.source_for(package_name) || {}
-        effective_importmap = new_target ? to_importmap : from_importmap
+        old_source = enrich_importmap_source(old_source, from_lockfile)
+        new_source = enrich_importmap_source(new_source, to_lockfile)
+        effective_source = new_target ? new_source : old_source
+        old_package_version = js_package_version(old_source)
+        new_package_version = js_package_version(new_source)
+        comparison_old = old_package_version || old_target
+        comparison_new = new_package_version || new_target
 
         {
           name: package_name,
           package_scope: "js",
           package_type_label: "JS",
           package_source_file: :importmap,
-          old_version: js_package_version(old_source),
-          new_version: js_package_version(new_source),
+          old_version: old_package_version,
+          new_version: new_package_version,
           raw_old_version: old_target,
           raw_new_version: new_target,
-          status: gem_status(old_target, new_target),
+          status: gem_status(comparison_old, comparison_new),
           version_label: js_version_label(old_target, new_target, old_source, new_source),
           platform: nil,
-          source: effective_importmap&.source_for(package_name),
+          source: effective_source,
           bundle_origins: [],
           bundle_origin_labels: []
         }
@@ -432,6 +438,17 @@ module Gemstar
 
     def js_package_version(source)
       source && source[:package_version].to_s.empty? ? nil : source&.dig(:package_version)
+    end
+
+    def enrich_importmap_source(source, lockfile)
+      source = (source || {}).dup
+      provider_gem = source[:provider_gem]
+      return source if provider_gem.to_s.empty?
+
+      provider_version = lockfile&.specs&.[](provider_gem)
+      source[:provider_version] = provider_version unless provider_version.to_s.empty?
+      source[:package_version] ||= provider_version unless provider_version.to_s.empty?
+      source
     end
 
     def importmap_target_label(target)
