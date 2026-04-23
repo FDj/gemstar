@@ -384,7 +384,7 @@ module Gemstar
           force_refresh: force_refresh
         )
         sections = tag_sections.merge(current_release_sections)
-      elsif @metadata.is_a?(Gemstar::NpmMetadata)
+      elsif discover_github_tag_sections?
         tag_sections = parse_github_tag_sections(
           repo_uri,
           cache_only: cache_only,
@@ -572,24 +572,10 @@ module Gemstar
     end
 
     def github_tag_candidates(version)
+      return @metadata.github_tag_candidates(version) if @metadata.respond_to?(:github_tag_candidates)
+
       raw = version.to_s
-      candidates = [raw, (raw.start_with?("v") ? raw : "v#{raw}")]
-
-      if @metadata.is_a?(Gemstar::NpmMetadata)
-        package_name = @metadata.gem_name.to_s
-        unless package_name.empty?
-          candidates << "#{package_name}@#{raw}"
-          candidates << "#{package_name}@v#{raw}" unless raw.start_with?("v")
-
-          short_name = package_name.split("/").last
-          if short_name && short_name != package_name
-            candidates << "#{short_name}@#{raw}"
-            candidates << "#{short_name}@v#{raw}" unless raw.start_with?("v")
-          end
-        end
-      end
-
-      candidates.uniq
+      [raw, (raw.start_with?("v") ? raw : "v#{raw}")].uniq
     end
 
     def normalize_github_tag_version(tag_name)
@@ -599,23 +585,13 @@ module Gemstar
     end
 
     def github_tag_matches_metadata?(tag_name)
-      return true unless @metadata.is_a?(Gemstar::NpmMetadata)
-
-      decoded = URI.decode_www_form_component(tag_name.to_s.split("?").first.to_s)
-      package_name = @metadata.gem_name.to_s
-      return true if package_name.empty?
-
-      if decoded.include?("@")
-        prefix = decoded.sub(/@v?\d[\w.\-]*\z/i, "")
-        return true if prefix == package_name
-
-        short_name = package_name.split("/").last
-        return true if short_name && prefix == short_name
-
-        return false
-      end
+      return @metadata.github_tag_matches?(tag_name) if @metadata.respond_to?(:github_tag_matches?)
 
       true
+    end
+
+    def discover_github_tag_sections?
+      @metadata.respond_to?(:discover_github_tag_sections?) && @metadata.discover_github_tag_sections?
     end
 
     def prefer_github_releases_first?(cache_only:, force_refresh:)

@@ -2,19 +2,23 @@
 
 ## Unreleased
 
-### New Features
-- Server: Support **JavaScript packages** in importmap.rb and package-lock.json
-
-### Bug Fixes
+- Server: Add **JavaScript package support** to browse change logs for your project's packages. This currently
+  supports packages in `importmap.rb` and `package-lock.json`.
 - Server: Change launch behavior to more reliably start cache warmer at launch.
-- Server: Add --open option to open the server in a browser on launch.
-- Server: Defer initial detail rendering so the page becomes interactive sooner on startup
-- Server: Persist the Details disclosure state between gem views
-- Server: Continue background warming with cached parsed release sections, not just raw fetched pages
-- Server: Improve GitHub release discovery with direct tag-page fallback and paginated GitHub tags support
-- Server: Prefer real changelog file entries over GitHub-derived placeholders when both exist
-- Server: Short gem description now rendered as markdown (for minitest gem)
-- Server: Improve section parsing for simplecov and similar gems
+- Server: Add `--open` option to open the server root in a local browser at launch.
+- Server: Defer initial detail rendering so the page becomes interactive sooner on startup.
+- Server: Persist the Details disclosure state between gem views.
+- Server: Continue background warming with cached parsed release sections, not just raw fetched pages.
+- Server: Improve GitHub release discovery with direct tag-page fallback and paginated GitHub tags support.
+- Server: Prefer real changelog file entries over GitHub-derived placeholders when both exist.
+- Server: Short gem description now rendered as markdown (for minitest gem).
+- Server: Improve section parsing for simplecov and similar gems.
+- Server: Increase limit for number of recent commits to show in menu to 100.
+- Diff: Add **JavaScript package support.** Like with Server, this supports `importmap.rb` and `package-lock.json`.
+- Diff: Add `--ecosystem` parameter to choose js/gems/all.
+- Diff: Add `--project` directive to point at the project root to diff.
+- Diff: Add `--since` parameter to limit diff to commits since a specific date, e.g. `--since "3 weeks ago"`.
+- Diff: Add "file://" to generated report output to fix click-to-open in certain terminal apps.
 
 ## 1.0.4
 

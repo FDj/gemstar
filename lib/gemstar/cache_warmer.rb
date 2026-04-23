@@ -122,9 +122,7 @@ module Gemstar
       metadata = metadata_adapter_for(package_state)
       return unless metadata
 
-      metadata.meta
-      metadata.repo_uri
-      Gemstar::ChangeLog.new(metadata).sections
+      metadata.warm_cache(versions: package_versions(package_state))
     rescue StandardError => e
       log "Cache refresh failed for #{package_label(package_state)}: #{e.class}: #{e.message}"
     end
@@ -157,6 +155,16 @@ module Gemstar
 
     def package_label(package_state)
       package_state.dig(:source, :package_name) || package_state[:name]
+    end
+
+    def package_versions(package_state)
+      [
+        package_state[:old_version],
+        package_state[:new_version],
+        package_state[:raw_old_version],
+        package_state[:raw_new_version],
+        package_state.dig(:source, :package_version)
+      ].compact
     end
 
     def metadata_adapter_for(package_state)

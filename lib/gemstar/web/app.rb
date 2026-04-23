@@ -913,16 +913,12 @@ module Gemstar
         @metadata_cache.delete([gem_state[:package_scope], gem_state[:name]])
         metadata.meta(cache_only: false, force_refresh: true)
         metadata.repo_uri(cache_only: false, force_refresh: true)
-        if metadata.is_a?(Gemstar::NpmMetadata)
-          limited_sections = Gemstar::ChangeLog.new(metadata).sections_for_versions(
-            relevant_package_versions(gem_state, metadata),
-            cache_only: false,
-            force_refresh: true
-          )
-          cached_sections.merge(limited_sections || {})
-        else
-          Gemstar::ChangeLog.new(metadata).sections(cache_only: false, force_refresh: true) || cached_sections
-        end
+        refreshed_sections = metadata.changelog_sections(
+          versions: relevant_package_versions(gem_state, metadata),
+          cache_only: false,
+          force_refresh: true
+        )
+        cached_sections.merge(refreshed_sections || {})
       end
 
       def relevant_package_versions(gem_state, metadata)

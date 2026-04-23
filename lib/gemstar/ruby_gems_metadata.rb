@@ -75,5 +75,28 @@ module Gemstar
       repo
     end
 
+    def changelog_sections(versions: nil, cache_only: false, force_refresh: false)
+      Gemstar::ChangeLog.new(self).sections(cache_only: cache_only, force_refresh: force_refresh)
+    end
+
+    def warm_cache(versions: nil)
+      meta
+      repo_uri
+      changelog_sections(versions: versions)
+    end
+
+    def discover_github_tag_sections?
+      false
+    end
+
+    def github_tag_candidates(version)
+      raw = version.to_s
+      [raw, (raw.start_with?("v") ? raw : "v#{raw}")].uniq
+    end
+
+    def github_tag_matches?(tag_name)
+      true
+    end
+
   end
 end

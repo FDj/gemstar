@@ -13,8 +13,9 @@ module Gemstar
       }
     }.freeze
 
-    def initialize(path: nil, content: nil)
+    def initialize(path: nil, content: nil, vendor_reader: nil)
       @path = path
+      @vendor_reader = vendor_reader
       @pins = parse_content(content || File.read(path))
     end
 
@@ -67,19 +68,18 @@ module Gemstar
     end
 
     def vendored_package_metadata_for(target)
-      return {} unless @path
       return {} unless local_javascript_target?(target)
 
-      vendor_path = File.expand_path(File.join(File.dirname(@path), "..", "vendor", "javascript", target.to_s))
-      return {} unless File.file?(vendor_path)
-
-      first_line = File.open(vendor_path, &:readline).to_s
+      first_line = vendored_file_first_line(target)
       return {} if first_line.empty?
 
       if first_line =~ %r{\A//\s+((?:@[^/]+/)?[^@\s]+(?:/[^@\s]+)?)@([^\s]+)\s+downloaded from\s+(https?://\S+)}
         package_name = Regexp.last_match(1)
         package_version = Regexp.last_match(2)
         remote = Regexp.last_match(3)
+        remote_metadata = cdn_package_metadata_for(remote)
+        package_name = remote_metadata[:package_name] || package_name
+        package_version = remote_metadata[:package_version] || package_version
         {
           package_name: package_name,
           package_version: package_version,
@@ -91,6 +91,22 @@ module Gemstar
       end
     rescue EOFError
       {}
+    end
+
+    def vendored_file_first_line(target)
+      if @vendor_reader
+        content = @vendor_reader.call(target.to_s)
+        return content.to_s.lines.first.to_s if content
+      end
+
+      return "" unless @path
+
+      vendor_path = File.expand_path(File.join(File.dirname(@path), "..", "vendor", "javascript", target.to_s))
+      return "" unless File.file?(vendor_path)
+
+      File.open(vendor_path, &:readline).to_s
+    rescue EOFError
+      ""
     end
 
     def cdn_package_metadata_for(target)

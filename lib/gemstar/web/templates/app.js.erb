@@ -27,12 +27,13 @@
       link.classList.remove("is-selected");
     });
   };
-  const requestedGemName = () => new URL(window.location.href).searchParams.get("gem");
+  const packageNameParam = (url) => url.searchParams.get("package") || url.searchParams.get("gem");
+  const requestedGemName = () => packageNameParam(new URL(window.location.href));
   const currentDetailGemName = () => {
     if (!detailPanel || !detailPanel.dataset.detailUrl) return null;
 
     try {
-      return new URL(detailPanel.dataset.detailUrl, window.location.origin).searchParams.get("gem");
+      return packageNameParam(new URL(detailPanel.dataset.detailUrl, window.location.origin));
     } catch (_error) {
       return null;
     }
@@ -109,7 +110,7 @@
   };
 
   const syncSidebarSelection = (gemName = null, keepVisible = false) => {
-    const effectiveGemName = gemName || new URL(window.location.href).searchParams.get("gem");
+    const effectiveGemName = gemName || requestedGemName();
     if (!effectiveGemName) {
       clearSidebarSelection();
       return;
@@ -196,7 +197,7 @@
           window.history[historyMethod]({}, "", pageUrl);
         }
         const detailUrl = new URL(url, window.location.origin);
-        syncSidebarSelection(detailUrl.searchParams.get("gem"));
+        syncSidebarSelection(packageNameParam(detailUrl));
       })
       .catch(() => {
         stopDetailLoading();
@@ -327,19 +328,19 @@
         event.target.value = "<%= selected_project_index %>";
         return;
       }
-      navigate({ project: event.target.value, from: null, to: "worktree", filter: currentFilter, scope: currentPackageScope, gem: null });
+      navigate({ project: event.target.value, from: null, to: "worktree", filter: currentFilter, scope: currentPackageScope, package: null, gem: null });
     });
   }
 
   if (fromSelect) {
     fromSelect.addEventListener("change", (event) => {
-      navigate({ from: event.target.value, filter: currentFilter, scope: currentPackageScope, gem: null });
+      navigate({ from: event.target.value, filter: currentFilter, scope: currentPackageScope, package: null, gem: null });
     });
   }
 
   if (toSelect) {
     toSelect.addEventListener("change", (event) => {
-      navigate({ to: event.target.value, filter: currentFilter, scope: currentPackageScope, gem: null });
+      navigate({ to: event.target.value, filter: currentFilter, scope: currentPackageScope, package: null, gem: null });
     });
   }
 

@@ -64,6 +64,63 @@ module Gemstar
       repo
     end
 
+    def changelog_sections(versions: nil, cache_only: false, force_refresh: false)
+      requested_versions = Array(versions).compact
+      changelog = Gemstar::ChangeLog.new(self)
+      if requested_versions.empty?
+        changelog.sections(cache_only: cache_only, force_refresh: force_refresh)
+      else
+        changelog.sections_for_versions(requested_versions, cache_only: cache_only, force_refresh: force_refresh)
+      end
+    end
+
+    def warm_cache(versions: nil)
+      meta
+      repo_uri
+      changelog_sections(versions: versions)
+    end
+
+    def discover_github_tag_sections?
+      true
+    end
+
+    def github_tag_candidates(version)
+      raw = version.to_s
+      candidates = [raw, (raw.start_with?("v") ? raw : "v#{raw}")]
+
+      package_name = gem_name.to_s
+      unless package_name.empty?
+        candidates << "#{package_name}@#{raw}"
+        candidates << "#{package_name}@v#{raw}" unless raw.start_with?("v")
+
+        short_name = package_name.split("/").last
+        if short_name && short_name != package_name
+          candidates << "#{short_name}@#{raw}"
+          candidates << "#{short_name}@v#{raw}" unless raw.start_with?("v")
+        end
+      end
+
+      candidates.uniq
+    end
+
+    def github_tag_matches?(tag_name)
+      decoded = URI.decode_www_form_component(tag_name.to_s.split("?").first.to_s)
+      package_name = gem_name.to_s
+      return true if package_name.empty?
+
+      if decoded.include?("@")
+        prefix = decoded.sub(/@v?\d[\w.\-]*\z/i, "")
+        return true if prefix == package_name
+
+        short_name = package_name.split("/").last
+        return true if short_name && prefix == short_name
+
+        return false
+      end
+
+      true
+    end
+
     private
 
     def normalize_meta(parsed)
