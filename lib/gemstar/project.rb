@@ -2,6 +2,8 @@ require "time"
 
 module Gemstar
   class Project
+    REVISION_HISTORY_LIMIT = 100
+
     attr_reader :directory
     attr_reader :gemfile_path
     attr_reader :lockfile_path
@@ -85,7 +87,7 @@ module Gemstar
     def current_importmap
       return nil unless importmap?
 
-      @current_importmap ||= Gemstar::ImportmapFile.new(path: importmap_path)
+      @current_importmap ||= Gemstar::ImportmapFile.new(path: importmap_path, vendor_reader: importmap_vendor_reader("worktree"))
     end
 
     def package_lock?
@@ -102,11 +104,11 @@ module Gemstar
       @current_package_lock ||= Gemstar::PackageLockFile.new(path: package_lock_path)
     end
 
-    def revision_history(limit: 20)
+    def revision_history(limit: REVISION_HISTORY_LIMIT)
       history_for_paths(tracked_git_paths, limit: limit)
     end
 
-    def lockfile_revision_history(limit: 20)
+    def lockfile_revision_history(limit: REVISION_HISTORY_LIMIT)
       return [] unless lockfile?
 
       relative_path = git_repo.relative_path(lockfile_path)
@@ -115,7 +117,7 @@ module Gemstar
       history_for_paths([relative_path], limit: limit)
     end
 
-    def gemfile_revision_history(limit: 20)
+    def gemfile_revision_history(limit: REVISION_HISTORY_LIMIT)
       return [] unless gemfile?
 
       relative_path = git_repo.relative_path(gemfile_path)
@@ -130,7 +132,7 @@ module Gemstar
         "worktree"
     end
 
-    def revision_options(limit: 20)
+    def revision_options(limit: REVISION_HISTORY_LIMIT)
       [{ id: "worktree", label: "Worktree", description: "Current Gemfile.lock in the working tree" }] +
         revision_history(limit: limit).map do |revision|
           {
@@ -188,7 +190,7 @@ module Gemstar
       content = git_repo.try_git_command(["show", "#{revision_id}:#{relative_importmap_path}"])
       return nil if content.nil? || content.empty?
 
-      @importmap_cache[cache_key] = Gemstar::ImportmapFile.new(content: content)
+      @importmap_cache[cache_key] = Gemstar::ImportmapFile.new(content: content, vendor_reader: importmap_vendor_reader(revision_id))
     end
 
     def package_lock_for_revision(revision_id)
@@ -345,7 +347,7 @@ module Gemstar
       current_importmap_specs = current_importmap&.specs || {}
       current_package_lock_specs = current_package_lock&.specs || {}
 
-      revision_history(limit: 20).find do |revision|
+      revision_history(limit: REVISION_HISTORY_LIMIT).find do |revision|
         revision_lockfile = lockfile_for_revision(revision[:id])
         revision_importmap = importmap_for_revision(revision[:id])
         revision_package_lock = package_lock_for_revision(revision[:id])
@@ -355,7 +357,7 @@ module Gemstar
       end&.dig(:id)
     end
 
-    def history_for_paths(paths, limit: 20, reverse: false)
+    def history_for_paths(paths, limit: REVISION_HISTORY_LIMIT, reverse: false)
       return [] if git_root.nil? || git_root.empty?
       return [] if paths.empty?
 
@@ -382,11 +384,21 @@ module Gemstar
     end
 
     def tracked_git_paths
-      [gemfile_path, lockfile_path, importmap_path, package_json_path, package_lock_path].filter_map do |path|
+      [gemfile_path, lockfile_path, importmap_path, package_json_path, package_lock_path, *importmap_vendor_paths].filter_map do |path|
         next unless File.file?(path)
 
         git_repo.relative_path(path)
       end.uniq
+    end
+
+    def importmap_vendor_paths
+      return [] unless current_importmap
+
+      current_importmap.specs.values.filter_map do |target|
+        next unless target.to_s.end_with?(".js", ".mjs")
+
+        File.join(directory, "vendor", "javascript", target.to_s)
+      end
     end
 
     def gem_status(old_version, new_version)
@@ -458,6 +470,22 @@ module Gemstar
       return version if version
 
       target.to_s.sub(%r{\Ahttps?://}, "").slice(0, 36)
+    end
+
+    def importmap_vendor_reader(revision_id)
+      lambda do |target|
+        next nil unless target.to_s.end_with?(".js", ".mjs")
+
+        vendor_path = File.join(directory, "vendor", "javascript", target.to_s)
+        if revision_id.nil? || revision_id == "worktree"
+          File.file?(vendor_path) ? File.read(vendor_path) : nil
+        else
+          relative_path = git_repo.relative_path(vendor_path)
+          next nil if relative_path.nil?
+
+          git_repo.try_git_command(["show", "#{revision_id}:#{relative_path}"])
+        end
+      end
     end
 
     def compare_versions(left, right)
