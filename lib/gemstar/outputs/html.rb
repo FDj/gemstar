@@ -2,6 +2,7 @@
 
 require_relative "basic"
 require "pathname"
+require "cgi"
 require "kramdown"
 begin
   require "kramdown-parser-gfm"
@@ -14,7 +15,7 @@ module Gemstar
     class HTML < Basic
       def render_diff(diff_command)
         body = diff_command.updates.sort.map do |gem_name, info|
-          icon = info[:homepage_url]&.include?("github.com") ? "🐙" : "💎"
+          icon = icon_for(info)
           tooltip = info[:description] ? "title=\"#{info[:description].gsub('"', "&quot;")}\"" : ""
           link = "<a href=\"#{info[:homepage_url]}\" #{tooltip} target=\"_blank\">#{gem_name}</a>"
           html = if info[:sections]
@@ -38,14 +39,14 @@ module Gemstar
 
           <<~HTML
             <section>
-              <h2>#{icon} #{link}: #{info[:old] || "new"} → #{info[:new]}</h2>
+              <h2>#{icon} #{link}: #{version_label(info)}</h2>
               #{"<p><a href='#{info[:release_page]}' target='_blank'>View all GitHub release notes</a></p>" if info[:release_page]}
               #{html}
             </section>
           HTML
         end.join("\n")
 
-        project_name = Pathname.getwd.basename.to_s
+        project_name = diff_command.project_name
 
         <<~HTML
           <!DOCTYPE html>
@@ -63,12 +64,60 @@ module Gemstar
             </style>
           </head>
           <body>
-            <h1>#{project_name}: Gem Updates</h1>
+            <h1>#{project_name}: Package Updates</h1>
             <p><i>Showing changes from #{diff_command.from} to #{diff_command.to || "now"}, generated on #{Time.now.strftime("%Y-%m-%d %H:%M:%S %z")}.</i></p>
+            #{range_details(diff_command)}
+            #{considered_commits(diff_command)}
             #{body}
           </body>
           </html>
         HTML
+      end
+
+      private
+
+      def icon_for(info)
+        return "📦" if info[:package_scope] == "js"
+        return "🐙" if info[:homepage_url]&.include?("github.com")
+
+        "💎"
+      end
+
+      def version_label(info)
+        info[:version_label] || "#{info[:old] || "new"} → #{info[:new]}"
+      end
+
+      def range_details(diff_command)
+        return "" unless diff_command.since
+
+        cutoff = diff_command.format_commit(diff_command.since_cutoff_commit, fallback_revision: diff_command.from)
+        <<~HTML
+          <section>
+            <h2>Diff Range</h2>
+            <p>Since cutoff <code>#{h(diff_command.since)}</code> resolved to #{h(cutoff)}.</p>
+          </section>
+        HTML
+      end
+
+      def considered_commits(diff_command)
+        commits = Array(diff_command.considered_commits)
+        items = commits.map do |commit|
+          %(<li><code>#{h(commit[:short_sha] || commit[:id])}</code> #{h(commit[:authored_at])} #{h(commit[:subject])}</li>)
+        end.join("\n")
+        items = "<li>No commits found in this range.</li>" if items.empty?
+
+        <<~HTML
+          <section>
+            <h2>Commits Considered</h2>
+            <ul>
+              #{items}
+            </ul>
+          </section>
+        HTML
+      end
+
+      def h(value)
+        CGI.escapeHTML(value.to_s)
       end
     end
   end
