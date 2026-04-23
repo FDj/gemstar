@@ -9,15 +9,19 @@ module Gemstar
   module Outputs
     class Markdown < Basic
       def render_diff(diff_command)
-        project_name = Pathname.getwd.basename.to_s
+        project_name = diff_command.project_name
         body = diff_command.updates.sort.map do |gem_name, info|
           render_entry(gem_name, info)
         end.join("\n\n---\n\n")
 
         <<~MARKDOWN
-          # #{project_name}: Gem Updates
+          # #{project_name}: Package Updates
 
           _Showing changes from #{diff_command.from} to #{diff_command.to || "now"}, generated on #{Time.now.strftime("%Y-%m-%d %H:%M:%S %z")}._
+
+          #{range_details(diff_command)}
+
+          #{considered_commits(diff_command)}
 
           #{body}
         MARKDOWN
@@ -35,7 +39,7 @@ module Gemstar
         parts = []
         parts << title
         parts << ""
-        parts << "*#{info[:old] || "new"} → #{info[:new]}*"
+        parts << "*#{info[:version_label] || "#{info[:old] || "new"} → #{info[:new]}"}*"
         parts << ""
         parts << info[:description].to_s unless info[:description].to_s.empty?
         parts << "" unless info[:description].to_s.empty?
@@ -51,6 +55,28 @@ module Gemstar
         end
 
         parts.join("\n").strip
+      end
+
+      def range_details(diff_command)
+        return "" unless diff_command.since
+
+        cutoff = diff_command.format_commit(diff_command.since_cutoff_commit, fallback_revision: diff_command.from)
+        "## Diff Range\n\nSince cutoff `#{diff_command.since}` resolved to #{cutoff}."
+      end
+
+      def considered_commits(diff_command)
+        commits = Array(diff_command.considered_commits)
+        lines = ["## Commits Considered", ""]
+
+        if commits.empty?
+          lines << "No commits found in this range."
+        else
+          lines.concat(commits.map do |commit|
+            "- `#{commit[:short_sha] || commit[:id]}` #{commit[:authored_at]} #{commit[:subject]}"
+          end)
+        end
+
+        lines.join("\n")
       end
 
       def link_lines(info)

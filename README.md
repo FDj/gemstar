@@ -43,14 +43,14 @@ gemstar server --open
 
 ### gemstar diff
 
-Run this after you've updated your gems.
+Run this after you've updated your dependencies.
 
 ```shell
 # in your project directory, after bundle update:
 gemstar diff
 ```
 
-This will generate an html diff report with changelog entries for each gem that was updated:
+This will generate an html diff report with changelog entries for each updated package:
 
 ![Gemstar diff command output](docs/diff.png)
 
@@ -60,10 +60,29 @@ You can also specify from and to hashes or tags to generate a diff report for a 
 gemstar diff --from 8e3aa96b7027834cdbabc0d8cbd5f9455165e930 --to HEAD
 ```
 
+To use a time range instead of choosing the starting commit yourself:
+
+```shell
+gemstar diff --project ~/Code/my-app --since "3 weeks"
+```
+
 To examine a specific Gemfile.lock, pass it like this:
 
 ```shell
 gemstar diff --lockfile=~/MyProject/Gemfile.lock
+```
+
+To diff a project from anywhere, pass the project directory or a supported project file. In project mode, gemstar includes Ruby gems plus JS packages from `importmap.rb` and `package-lock.json` when present:
+
+```shell
+gemstar diff --project ~/Code/my-app
+```
+
+To filter a project diff down to one ecosystem:
+
+```shell
+gemstar diff --project ~/Code/my-app --ecosystem js
+gemstar diff --project ~/Code/my-app --ecosystem gems
 ```
 
 To write markdown instead of html:
