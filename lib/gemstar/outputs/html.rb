@@ -67,8 +67,8 @@ module Gemstar
             <h1>#{project_name}: Package Updates</h1>
             <p><i>Showing changes from #{diff_command.from} to #{diff_command.to || "now"}, generated on #{Time.now.strftime("%Y-%m-%d %H:%M:%S %z")}.</i></p>
             #{range_details(diff_command)}
-            #{considered_commits(diff_command)}
             #{body}
+            #{considered_commits(diff_command)}
           </body>
           </html>
         HTML

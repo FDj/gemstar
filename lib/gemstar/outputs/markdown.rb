@@ -21,9 +21,9 @@ module Gemstar
 
           #{range_details(diff_command)}
 
-          #{considered_commits(diff_command)}
-
           #{body}
+
+          #{considered_commits(diff_command)}
         MARKDOWN
       end
 
