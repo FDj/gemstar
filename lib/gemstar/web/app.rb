@@ -13,7 +13,7 @@ module Gemstar
   module Web
     class App < Roda
       MISSING_METADATA = Object.new
-      CACHE_VERSION = "v3"
+      CACHE_VERSION = "v6"
 
       class << self
         def build(projects:, config_home:, cache_warmer: nil)
@@ -89,6 +89,7 @@ module Gemstar
 
         lockfile_stamp = File.file?(project.lockfile_path) ? File.mtime(project.lockfile_path).to_i : 0
         importmap_stamp = File.file?(project.importmap_path) ? File.mtime(project.importmap_path).to_i : 0
+        importmap_vendor_stamp = importmap_vendor_mtime(project)
         package_lock_stamp = File.file?(project.package_lock_path) ? File.mtime(project.package_lock_path).to_i : 0
 
         [
@@ -98,11 +99,25 @@ module Gemstar
           params["to"],
           params["filter"],
           params["scope"],
-          params["gem"],
+          package_param(params),
           lockfile_stamp,
           importmap_stamp,
+          importmap_vendor_stamp,
           package_lock_stamp
         ]
+      end
+
+      def importmap_vendor_mtime(project)
+        return 0 unless project&.importmap?
+
+        project.current_importmap.specs.values.filter_map do |target|
+          next unless target.to_s.end_with?(".js", ".mjs")
+
+          path = File.join(project.directory, "vendor", "javascript", target.to_s)
+          File.mtime(path).to_i if File.file?(path)
+        end.max || 0
+      rescue StandardError
+        0
       end
 
       def page_title
@@ -119,10 +134,15 @@ module Gemstar
         @selected_from_revision_id = selected_from_revision_id(params["from"])
         @selected_to_revision_id = selected_to_revision_id(@selected_to_revision_id)
         @gem_states = @selected_project ? @selected_project.gem_states(from_revision_id: @selected_from_revision_id, to_revision_id: @selected_to_revision_id) : []
-        @requested_gem_name = params["gem"]
-        @selected_package_scope = selected_package_scope(params["scope"], params["gem"])
-        @selected_filter = selected_filter(params["filter"], params["gem"])
-        @selected_gem = selected_gem_state(params["gem"])
+        requested_package_name = package_param(params)
+        @requested_gem_name = requested_package_name
+        @selected_package_scope = selected_package_scope(params["scope"], requested_package_name)
+        @selected_filter = selected_filter(params["filter"], requested_package_name)
+        @selected_gem = selected_gem_state(requested_package_name)
+      end
+
+      def package_param(params)
+        params["package"] || params["gem"]
       end
 
       def prioritize_selected_gem
@@ -419,12 +439,12 @@ module Gemstar
           <<~HTML
             <a
               class="gem-row#{selected}#{status_class}"
-              href="#{project_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, gem: gem[:name])}"
+              href="#{project_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, package: gem[:name])}"
               data-gem-link="true"
               data-gem-name="#{h(gem[:name])}"
               data-gem-updated="#{updated}"
               data-package-scope="#{h(gem[:package_scope])}"
-              data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, gem: gem[:name]))}"
+              data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, package: gem[:name]))}"
               #{hidden}
             >
               <span class="gem-name-row">
@@ -477,7 +497,7 @@ module Gemstar
         detail_pending = detail_pending?(@selected_gem[:name], metadata, groups)
 
         detail_html = <<~HTML
-          <section class="detail" data-detail-panel tabindex="0" data-detail-pending="#{detail_pending}" data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, gem: @selected_gem[:name]))}">
+          <section class="detail" data-detail-panel tabindex="0" data-detail-pending="#{detail_pending}" data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, package: @selected_gem[:name]))}">
             #{render_detail_hero(metadata)}
             #{render_detail_loading_notice if detail_pending}
             #{render_detail_revision_panel(groups)}
@@ -497,7 +517,7 @@ module Gemstar
           to: @selected_to_revision_id,
           filter: @selected_filter,
           scope: @selected_package_scope,
-          gem: @selected_gem[:name]
+          package: @selected_gem[:name]
         )
 
         <<~HTML
@@ -752,7 +772,7 @@ module Gemstar
           to: @selected_to_revision_id,
           filter: @selected_filter,
           scope: @selected_package_scope,
-          gem: name
+          package: name
         )
 
         %(<a href="#{h(href)}" data-gem-link-inline="true">#{h(name)}</a>)
@@ -893,7 +913,28 @@ module Gemstar
         @metadata_cache.delete([gem_state[:package_scope], gem_state[:name]])
         metadata.meta(cache_only: false, force_refresh: true)
         metadata.repo_uri(cache_only: false, force_refresh: true)
-        Gemstar::ChangeLog.new(metadata).sections(cache_only: false, force_refresh: true) || cached_sections
+        if metadata.is_a?(Gemstar::NpmMetadata)
+          limited_sections = Gemstar::ChangeLog.new(metadata).sections_for_versions(
+            relevant_package_versions(gem_state, metadata),
+            cache_only: false,
+            force_refresh: true
+          )
+          cached_sections.merge(limited_sections || {})
+        else
+          Gemstar::ChangeLog.new(metadata).sections(cache_only: false, force_refresh: true) || cached_sections
+        end
+      end
+
+      def relevant_package_versions(gem_state, metadata)
+        metadata_hash = metadata_for(gem_state) || {}
+        [
+          gem_state[:old_version],
+          gem_state[:new_version],
+          gem_state[:raw_old_version],
+          gem_state[:raw_new_version],
+          gem_state.dig(:source, :package_version),
+          metadata_hash["version"]
+        ].compact
       end
 
       def selected_gem_requires_refresh?(gem_state, cached_sections)
@@ -1270,18 +1311,18 @@ module Gemstar
         html
       end
 
-      def detail_query(project:, from:, to:, filter:, scope:, gem:)
-        "/detail?#{URI.encode_www_form(project: project, from: from, to: to, filter: filter, scope: scope, gem: gem)}"
+      def detail_query(project:, from:, to:, filter:, scope:, package:)
+        "/detail?#{URI.encode_www_form(project: project, from: from, to: to, filter: filter, scope: scope, package: package)}"
       end
 
-      def project_query(project:, from:, to:, filter:, scope:, gem:)
+      def project_query(project:, from:, to:, filter:, scope:, package:)
         params = {
           project: project,
           from: from,
           to: to,
           filter: filter,
           scope: scope,
-          gem: gem
+          package: package
         }.compact
 
         "/?#{URI.encode_www_form(params)}"
