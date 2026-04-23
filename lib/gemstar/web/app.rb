@@ -45,6 +45,16 @@ module Gemstar
           end
         end
 
+        r.get "favicon.svg" do
+          response["Content-Type"] = "image/svg+xml; charset=utf-8"
+          favicon_svg
+        end
+
+        r.get "favicon.ico" do
+          response["Content-Type"] = "image/svg+xml; charset=utf-8"
+          favicon_svg
+        end
+
         r.get "detail" do
           request_cache_key = detail_request_cache_key(r.params)
           request_cache = self.class.opts[:detail_request_cache]
@@ -1328,21 +1338,18 @@ module Gemstar
         render_template(
           "page.html.erb",
           title: h(title),
-          favicon_data_uri: favicon_data_uri,
           styles_css: template_source("app.css"),
           body_html: yield
         )
       end
 
-      def favicon_data_uri
-        svg = <<~SVG
+      def favicon_svg
+        <<~SVG
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
             <rect width="64" height="64" rx="14" fill="#b44d25"/>
             <text x="32" y="44" text-anchor="middle" font-family="Avenir Next, Helvetica Neue, Segoe UI, sans-serif" font-size="34" font-weight="700" fill="#ffffff">G</text>
           </svg>
         SVG
-
-        "data:image/svg+xml,#{URI.encode_www_form_component(svg)}"
       end
 
       def render_behavior_script
