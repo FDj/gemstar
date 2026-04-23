@@ -1,14 +1,25 @@
 require "open-uri"
 require "uri"
 require "json"
+require_relative "remote_repository"
 
 module Gemstar
   class RubyGemsMetadata
+    RUBY_GEMS_METADATA_PATH = File.expand_path("data/ruby_gems_metadata.json", __dir__)
+
     def initialize(gem_name)
       @gem_name = gem_name
     end
 
     attr_reader :gem_name
+
+    def self.package_metadata
+      @package_metadata ||= begin
+        JSON.parse(File.read(RUBY_GEMS_METADATA_PATH))
+      rescue Errno::ENOENT, JSON::ParserError
+        {}
+      end
+    end
 
     def cache_key
       "rubygems-#{gem_name}"
@@ -96,6 +107,43 @@ module Gemstar
 
     def github_tag_matches?(tag_name)
       true
+    end
+
+    def changelog_source(repo_uri:, cache_only: false, force_refresh: false)
+      override = package_metadata.dig("changelog")
+      if override
+        override_paths = Array(override["paths"]).compact
+        override_branches = Array(override["branches"]).compact
+        override_branches = [""] if override_branches.empty? && override["raw_base"]
+        return {
+          base: expand_metadata_template(override["raw_base"] || github_raw_base(repo_uri)),
+          paths: override_paths.empty? ? Gemstar::ChangeLog::DEFAULT_CHANGELOG_PATHS : override_paths,
+          branches: override_branches.empty? ? RemoteRepository.new(github_raw_base(repo_uri)).find_main_branch(cache_only: cache_only, force_refresh: force_refresh) : override_branches
+        }
+      end
+
+      base = github_raw_base(repo_uri)
+      {
+        base: base,
+        paths: Gemstar::ChangeLog::DEFAULT_CHANGELOG_PATHS,
+        branches: RemoteRepository.new(base).find_main_branch(cache_only: cache_only, force_refresh: force_refresh)
+      }
+    end
+
+    def package_metadata
+      self.class.package_metadata.find do |pattern, _metadata|
+        File.fnmatch?(pattern, gem_name)
+      end&.last || {}
+    end
+
+    private
+
+    def github_raw_base(repo_uri)
+      repo_uri.sub("https://github.com", "https://raw.githubusercontent.com").chomp("/")
+    end
+
+    def expand_metadata_template(value)
+      value.to_s.gsub("{gem_name}", gem_name)
     end
 
   end

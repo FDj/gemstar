@@ -5,6 +5,13 @@ require "json"
 module Gemstar
   class ChangeLog
     @@candidates_found = Hash.new(0)
+    DEFAULT_CHANGELOG_PATHS = %w[
+      CHANGELOG.md releases.md CHANGES.md
+      Changelog.md changelog.md ChangeLog.md
+      Changes.md changes.md
+      HISTORY.md History.md history.md
+      History CHANGELOG.rdoc
+    ].freeze
 
     def initialize(metadata)
       @metadata = metadata
@@ -154,30 +161,11 @@ module Gemstar
       repo_uri = @metadata.repo_uri(cache_only: cache_only, force_refresh: force_refresh)
       return [] if repo_uri.nil? || repo_uri.empty?
 
-      if repo_uri =~ %r{https://github\.com/aws/aws-sdk-ruby}
-        base = "https://raw.githubusercontent.com/aws/aws-sdk-ruby/refs/heads/version-3/gems/#{@metadata.gem_name}"
-        aws_style = true
-      else
-        base = repo_uri.sub("https://github.com", "https://raw.githubusercontent.com")
-        aws_style = false
-      end
+      changelog_source = metadata_changelog_source(repo_uri, cache_only: cache_only, force_refresh: force_refresh)
+      return [] unless changelog_source
 
-      base = base.chomp("/")
-
-      paths = aws_style ? ["CHANGELOG.md"] : %w[
-        CHANGELOG.md releases.md CHANGES.md
-        Changelog.md changelog.md ChangeLog.md
-        Changes.md changes.md
-        HISTORY.md History.md history.md
-        History CHANGELOG.rdoc
-      ]
-
-      remote_repository = RemoteRepository.new(base)
-
-      branches = aws_style ? [""] : remote_repository.find_main_branch(cache_only: cache_only, force_refresh: force_refresh)
-
-      candidates += paths.product(branches).map do |file, branch|
-        uri = aws_style ? "#{base}/#{file}" : "#{base}/#{branch}/#{file}"
+      candidates += changelog_source[:paths].product(changelog_source[:branches]).map do |file, branch|
+        [changelog_source[:base], branch, file].reject { |segment| segment.to_s.empty? }.join("/")
       end
 
       # Add the gem's changelog_uri last as it's usually not the most parsable:
@@ -189,6 +177,19 @@ module Gemstar
       candidates.compact!
 
       candidates
+    end
+
+    def metadata_changelog_source(repo_uri, cache_only:, force_refresh:)
+      if @metadata.respond_to?(:changelog_source)
+        return @metadata.changelog_source(repo_uri: repo_uri, cache_only: cache_only, force_refresh: force_refresh)
+      end
+
+      base = repo_uri.sub("https://github.com", "https://raw.githubusercontent.com").chomp("/")
+      {
+        base: base,
+        paths: DEFAULT_CHANGELOG_PATHS,
+        branches: RemoteRepository.new(base).find_main_branch(cache_only: cache_only, force_refresh: force_refresh)
+      }
     end
 
     def fetch_changelog_content(cache_only: false, force_refresh: false)

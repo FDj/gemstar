@@ -1,0 +1,22 @@
+{
+  "@rails/actioncable": {
+    "provider_gem": "actioncable",
+    "repo_url": "https://github.com/rails/rails"
+  },
+  "@rails/actiontext": {
+    "provider_gem": "actiontext",
+    "repo_url": "https://github.com/rails/rails"
+  },
+  "@rails/activestorage": {
+    "provider_gem": "activestorage",
+    "repo_url": "https://github.com/rails/rails"
+  },
+  "@hotwired/stimulus-loading": {
+    "provider_gem": "stimulus-rails",
+    "repo_url": "https://github.com/hotwired/stimulus-rails"
+  },
+  "@hotwired/turbo-rails": {
+    "provider_gem": "turbo-rails",
+    "repo_url": "https://github.com/hotwired/turbo-rails"
+  }
+}

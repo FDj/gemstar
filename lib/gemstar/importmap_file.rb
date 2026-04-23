@@ -1,17 +1,22 @@
+require "json"
+
 module Gemstar
   class ImportmapFile
     Pin = Struct.new(:name, :target, :source, keyword_init: true)
 
-    PROVIDER_GEM_MAPPINGS = {
-      "@hotwired/stimulus-loading" => {
-        provider_gem: "stimulus-rails",
-        repo_url: "https://github.com/hotwired/stimulus-rails"
-      },
-      "@hotwired/turbo-rails" => {
-        provider_gem: "turbo-rails",
-        repo_url: "https://github.com/hotwired/turbo-rails"
-      }
-    }.freeze
+    IMPORTMAP_PACKAGE_METADATA_PATH = File.expand_path("data/importmap_package_metadata.json", __dir__)
+
+    def self.package_metadata
+      @package_metadata ||= begin
+        JSON.parse(File.read(IMPORTMAP_PACKAGE_METADATA_PATH)).transform_values do |attributes|
+          attributes.each_with_object({}) do |(key, value), metadata|
+            metadata[key.to_sym] = value
+          end
+        end
+      rescue Errno::ENOENT, JSON::ParserError
+        {}
+      end
+    end
 
     def initialize(path: nil, content: nil, vendor_reader: nil)
       @path = path
@@ -63,7 +68,10 @@ module Gemstar
       return {} unless package_like_pin_name?(name)
 
       metadata = { package_name: name, registry_url: "https://www.npmjs.com/package/#{name}" }
-      metadata[:package_version] = inline_version unless inline_version.to_s.empty?
+      unless inline_version.to_s.empty?
+        key = exact_package_version?(inline_version) ? :package_version : :package_requirement
+        metadata[key] = inline_version
+      end
       metadata
     end
 
@@ -129,19 +137,20 @@ module Gemstar
 
       return {} unless package_name
 
-      {
+      version_metadata = exact_package_version?(package_version) ? { package_version: package_version } : { package_requirement: package_version }
+
+      version_metadata.merge(
         package_name: package_name,
-        package_version: package_version,
         registry_url: "https://www.npmjs.com/package/#{package_name}"
-      }
+      )
     end
 
     def repo_source_for(name, target)
-      provider = PROVIDER_GEM_MAPPINGS[name]
-      repo_url = github_repo_url_for(target) || provider&.dig(:repo_url)
+      package_metadata = self.class.package_metadata[name]
+      repo_url = github_repo_url_for(target) || package_metadata&.dig(:repo_url)
       metadata = {}
       metadata[:repo_url] = repo_url if repo_url
-      metadata[:provider_gem] = provider[:provider_gem] if provider&.dig(:provider_gem)
+      metadata[:provider_gem] = package_metadata[:provider_gem] if package_metadata&.dig(:provider_gem)
       metadata
     end
 
@@ -167,6 +176,10 @@ module Gemstar
       return false if value.start_with?("./", "../")
 
       value.start_with?("@") || value.match?(/\A[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*\z/i)
+    end
+
+    def exact_package_version?(version)
+      version.to_s.match?(/\Av?\d+(?:\.\d+)*(?:[-.][A-Za-z0-9]+)*\z/)
     end
 
     def local_javascript_target?(target)

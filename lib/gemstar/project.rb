@@ -436,7 +436,8 @@ module Gemstar
       new_label = js_version_label_part(new_target, new_source)
       return "new → #{new_label}" if old_target.nil? && !new_target.nil?
       return "#{old_label} → removed" if !old_target.nil? && new_target.nil?
-      return new_label.to_s if old_target == new_target
+      return new_label.to_s if old_label == new_label && old_target == new_target
+      return "#{new_label} (source changed)" if old_label == new_label
 
       "#{old_label} → #{new_label}"
     end
@@ -444,6 +445,9 @@ module Gemstar
     def js_version_label_part(target, source)
       version = js_package_version(source)
       return version if version && !version.empty?
+
+      requirement = source&.dig(:package_requirement)
+      return "range #{requirement}" if requirement && !requirement.empty?
 
       importmap_target_label(target)
     end

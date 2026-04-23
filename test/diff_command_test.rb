@@ -324,7 +324,7 @@ class DiffCommandTest < Minitest::Test
     end
   end
 
-  def test_markdown_output_includes_cutoff_and_considered_commits
+  def test_markdown_output_puts_considered_commits_after_package_entries
     diff_command = Struct.new(:project_name, :updates, :from, :to, :since, :considered_commits, :since_cutoff_commit) do
       def format_commit(commit, fallback_revision:)
         return fallback_revision.to_s if commit.nil?
@@ -333,7 +333,14 @@ class DiffCommandTest < Minitest::Test
       end
     end.new(
       "demo-app",
-      {},
+      {
+        "react" => {
+          old: "18.2.0",
+          new: "19.0.0",
+          version_label: "18.2.0 → 19.0.0",
+          package_scope: "js"
+        }
+      },
       "abc123",
       nil,
       "3 weeks ago",
@@ -357,5 +364,6 @@ class DiffCommandTest < Minitest::Test
 
     assert_includes output, "Since cutoff `3 weeks ago` resolved to abc1234 Update dependency baseline (2026-04-02)."
     assert_includes output, "- `def4567` 2026-04-01T12:00:00+02:00 Update frontend packages"
+    assert_operator output.index("## react"), :<, output.index("## Commits Considered")
   end
 end

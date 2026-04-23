@@ -1,0 +1,9 @@
+{
+  "aws-*": {
+    "changelog": {
+      "raw_base": "https://raw.githubusercontent.com/aws/aws-sdk-ruby/refs/heads/version-3/gems/{gem_name}",
+      "paths": ["CHANGELOG.md"],
+      "branches": [""]
+    }
+  }
+}
