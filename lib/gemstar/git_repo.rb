@@ -54,14 +54,19 @@ module Gemstar
       # If it looks like a pure date (or you want to support "date only"),
       # map it to "latest commit before date on default_branch".
       if revish =~ /\d{4}-\d{2}-\d{2}/ || revish =~ /\d{1,2}:\d{2}/i
-        sha = run_git_command(["rev-list", "-1", "--before", revish, default_branch])
-        raise "No commit before #{revish} on #{default_branch}" if sha.empty?
-        return sha
+        return commit_before(revish, default_branch:)
       end
 
       # Otherwise let Git parse whatever the user typed.
       sha = run_git_command(%W[rev-parse --verify #{revish}^{commit}])
       raise "Unknown revision: #{revish}" if sha.empty?
+      sha
+    end
+
+    def commit_before(time_expression, default_branch: "HEAD")
+      sha = run_git_command(["rev-list", "-1", "--before", time_expression, default_branch])
+      raise "No commit before #{time_expression} on #{default_branch}" if sha.empty?
+
       sha
     end
 
@@ -101,7 +106,40 @@ module Gemstar
       run_git_command(command, in_directory: tree_root_directory)
     end
 
+    def commits_between(from_revision, to_revision = "HEAD")
+      return [] if tree_root_directory.nil? || tree_root_directory.empty?
+
+      range = "#{from_revision}..#{to_revision || "HEAD"}"
+      format = "%H%x1f%h%x1f%aI%x1f%s"
+      output = try_git_command(["log", "--reverse", "--pretty=format:#{format}", range], in_directory: tree_root_directory)
+      return [] if output.nil? || output.empty?
+
+      output.lines.filter_map { |line| parse_commit_log_line(line) }
+    end
+
+    def commit_info(revision)
+      return nil if tree_root_directory.nil? || tree_root_directory.empty?
+
+      format = "%H%x1f%h%x1f%aI%x1f%s"
+      output = try_git_command(["show", "-s", "--pretty=format:#{format}", revision], in_directory: tree_root_directory)
+      return nil if output.nil? || output.empty?
+
+      parse_commit_log_line(output)
+    end
+
     private
+
+    def parse_commit_log_line(line)
+      full_sha, short_sha, authored_at, subject = line.strip.split("\u001f", 4)
+      return nil if full_sha.nil? || full_sha.empty?
+
+      {
+        id: full_sha,
+        short_sha: short_sha,
+        authored_at: authored_at,
+        subject: subject
+      }
+    end
 
     def normalize_remote_url(remote)
       normalized = remote.strip.sub(%r{\.git\z}, "")
