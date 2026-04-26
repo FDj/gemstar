@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 require "cgi"
+require "date"
 require "json"
+require "time"
 
 module Gemstar
   class ChangeLog
@@ -31,7 +33,7 @@ module Gemstar
       return @sections if !cache_only && defined?(@sections) && !force_refresh
 
       metadata_key = @metadata.respond_to?(:cache_key) ? @metadata.cache_key : @metadata.gem_name
-      cache_key = "sections-v4-#{metadata_key}"
+      cache_key = "sections-v5-#{metadata_key}"
       serialized = if cache_only
         Cache.peek(cache_key)
       else
@@ -82,6 +84,31 @@ module Gemstar
       result
     end
 
+    def release_dates(versions: nil, cache_only: false, force_refresh: false)
+      requested_versions = normalize_requested_versions(versions)
+      metadata_key = @metadata.respond_to?(:cache_key) ? @metadata.cache_key : @metadata.gem_name
+      cache_key = "release-dates-v2-#{metadata_key}"
+      serialized = if cache_only
+        Cache.peek(cache_key)
+      else
+        Cache.fetch(cache_key, force: force_refresh) do
+          JSON.generate(compute_release_dates(force_refresh: force_refresh))
+        end
+      end
+
+      dates = if serialized
+        decode_sections(serialized) || {}
+      elsif cache_only
+        {}
+      else
+        compute_release_dates(force_refresh: force_refresh)
+      end
+
+      return dates if requested_versions.empty?
+
+      dates.select { |version, _date| requested_versions.include?(normalize_version_key(version)) }
+    end
+
     def compute_sections(force_refresh: false)
       changelog_sections = parse_changelog_sections(cache_only: false, force_refresh: force_refresh) || {}
       github_sections = parse_github_release_sections(cache_only: false, force_refresh: force_refresh) || {}
@@ -93,6 +120,23 @@ module Gemstar
       sections
     end
 
+    def compute_release_dates(force_refresh: false)
+      registry_dates = if @metadata.respond_to?(:registry_release_dates)
+        @metadata.registry_release_dates(cache_only: false, force_refresh: force_refresh)
+      else
+        {}
+      end
+      return registry_dates unless registry_dates.nil? || registry_dates.empty?
+
+      changelog_dates = parse_changelog_release_dates(cache_only: false, force_refresh: force_refresh)
+      return changelog_dates unless changelog_dates.nil? || changelog_dates.empty?
+
+      repo_uri = @metadata&.repo_uri(cache_only: false, force_refresh: force_refresh)
+      return {} unless repo_uri&.include?("github.com")
+
+      parse_github_tag_dates(repo_uri, cache_only: false, force_refresh: force_refresh)
+    end
+
     def decode_sections(serialized)
       JSON.parse(serialized)
     rescue JSON::ParserError
@@ -101,9 +145,7 @@ module Gemstar
 
     def merge_section_sources(changelog_sections, github_sections)
       return github_sections if changelog_sections.nil? || changelog_sections.empty?
-      return changelog_sections if github_sections.nil? || github_sections.empty?
-
-      github_sections.merge(changelog_sections)
+      changelog_sections
     end
 
     def extract_relevant_sections(old_version, new_version)
@@ -153,6 +195,13 @@ module Gemstar
       # 3) Anywhere: first semver-like token with a dot
       return $1 if heading[/\bv?#{version_token}(?![A-Za-z0-9])\b/]
       nil
+    end
+
+    def extract_release_date_from_heading(line)
+      return nil unless line
+
+      raw_date = line.to_s[/\b(\d{4}-\d{2}-\d{2})\b/, 1]
+      format_release_date(raw_date)
     end
 
     def changelog_uri_candidates(cache_only: false, force_refresh: false)
@@ -311,6 +360,21 @@ module Gemstar
       end
 
       sections
+    end
+
+    def parse_changelog_release_dates(cache_only: false, force_refresh: false)
+      c = content(cache_only: cache_only, force_refresh: force_refresh)
+      return {} if c.nil? || c.strip.empty?
+      return {} if c.include?("<html") || c.include?("<!DOCTYPE html")
+
+      c.lines.each_with_object({}) do |line, dates|
+        line = line.gsub(/^=+/) { |m| "#" * m.length }
+        next unless VERSION_PATTERNS.any? { |re| line.match?(re) }
+
+        version = extract_version_from_heading(line)
+        date = extract_release_date_from_heading(line)
+        dates[version] ||= date if version && date
+      end
     end
 
     def parse_github_release_sections(cache_only: false, force_refresh: false)
@@ -515,6 +579,40 @@ module Gemstar
       sections
     end
 
+    def parse_github_tag_dates(repo_uri, cache_only:, force_refresh:)
+      return {} unless repo_uri&.include?("github.com")
+
+      url = github_tags_url(repo_uri)
+      return {} unless url
+
+      dates = {}
+      seen_urls = {}
+
+      while url && !seen_urls[url]
+        seen_urls[url] = true
+        html = if cache_only
+          Cache.peek("tags-#{url}")
+        else
+          Cache.fetch("tags-#{url}", force: force_refresh) do
+            begin
+              URI.open(url, read_timeout: 8)&.read
+            rescue => e
+              puts "#{url}: #{e}" if Gemstar.debug?
+              nil
+            end
+          end
+        end
+
+        break if html.nil? || html.strip.empty?
+
+        page_dates, next_url = parse_single_github_tag_dates_page(html, repo_uri)
+        dates.merge!(page_dates) { |_version, existing, _new| existing }
+        url = next_url
+      end
+
+      dates
+    end
+
     def parse_single_github_tags_page(html, repo_uri)
       require "nokogiri"
 
@@ -563,6 +661,75 @@ module Gemstar
       [sections, next_url]
     rescue LoadError
       [{}, nil]
+    end
+
+    def parse_single_github_tag_dates_page(html, repo_uri)
+      require "nokogiri"
+
+      doc = begin
+              Nokogiri::HTML5(html)
+            rescue => _
+              Nokogiri::HTML(html)
+            end
+
+      dates = {}
+      repo_path = URI(repo_uri).path
+      release_prefix = "#{repo_path}/releases/tag/"
+      tree_prefix = "#{repo_path}/tree/"
+
+      doc.css("a[href]").each do |link|
+        href = link["href"].to_s
+        tag_name =
+          if href.start_with?(release_prefix)
+            href.delete_prefix(release_prefix)
+          elsif href.start_with?(tree_prefix)
+            href.delete_prefix(tree_prefix)
+          end
+        next if tag_name.to_s.empty?
+        next unless github_tag_matches_metadata?(tag_name)
+
+        version = normalize_github_tag_version(tag_name)
+        next if version.to_s.empty?
+
+        datetime = github_tag_datetime_for(link)
+        next if datetime.to_s.empty?
+
+        dates[version] ||= format_release_date(datetime)
+      end
+
+      next_href =
+        doc.at_css('a[rel="next"], a.next_page')&.[]("href") ||
+        doc.css("a[href]").find do |link|
+          href = link["href"].to_s
+          text = link.text.to_s.gsub(/\s+/, " ").strip
+          href.include?("/tags?after=") && text == "Next"
+        end&.[]("href")
+      next_url = if next_href && !next_href.empty?
+        URI.join(repo_uri, next_href).to_s
+      end
+
+      [dates.compact, next_url]
+    rescue LoadError
+      [{}, nil]
+    end
+
+    def github_tag_datetime_for(link)
+      container = link.at_xpath('ancestor::*[self::li or self::div][.//relative-time or .//time-ago][1]')
+      time_node = container&.at_css("relative-time[datetime], time-ago[datetime]") ||
+                  link.xpath('following::relative-time[@datetime] | following::time-ago[@datetime]').first
+      time_node&.[]("datetime")
+    end
+
+    def format_release_date(datetime)
+      if datetime.to_s.match?(/\A\d{4}-\d{2}-\d{2}\z/)
+        date = Date.strptime(datetime.to_s, "%Y-%m-%d")
+        return date.strftime("%b #{date.day}, %Y")
+      end
+
+      time = Time.parse(datetime.to_s).utc
+      time.strftime("%b #{time.day}, %Y")
+    rescue ArgumentError
+      nil
     end
 
     def parse_single_github_release_page(html, version)

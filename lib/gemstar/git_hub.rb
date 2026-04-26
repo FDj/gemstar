@@ -8,11 +8,12 @@ module Gemstar
       uri = URI(url)
       return url unless uri.host == "github.com"
 
-      owner, repo, blob, *rest = uri.path.split("/")[1..]
-      return url unless blob == "blob"
+      owner, repo, view, *rest = uri.path.split("/")[1..]
+      return url unless %w[blob tree].include?(view)
 
       ref  = rest.shift
       path = rest.join("/")
+      return url if path.empty?
 
       ref_prefix = ref_is_tag ? "refs/tags/" : ""
 

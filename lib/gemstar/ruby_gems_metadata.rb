@@ -1,6 +1,8 @@
 require "open-uri"
 require "uri"
 require "json"
+require "date"
+require "time"
 require_relative "remote_repository"
 
 module Gemstar
@@ -90,6 +92,28 @@ module Gemstar
       Gemstar::ChangeLog.new(self).sections(cache_only: cache_only, force_refresh: force_refresh)
     end
 
+    def registry_release_dates(cache_only: false, force_refresh: false)
+      cache_key = "rubygems-versions-#{gem_name}"
+      json = if cache_only
+        Cache.peek(cache_key)
+      else
+        url = "https://rubygems.org/api/v1/versions/#{URI.encode_www_form_component(gem_name)}.json"
+        Cache.fetch(cache_key, force: force_refresh) do
+          URI.open(url, read_timeout: 8).read
+        end
+      end
+
+      Array(JSON.parse(json)).each_with_object({}) do |version, dates|
+        number = version["number"].to_s
+        created_at = version["created_at"].to_s
+        next if number.empty? || created_at.empty?
+
+        dates[number] = format_registry_release_date(created_at)
+      end.compact
+    rescue JSON::ParserError
+      {}
+    end
+
     def warm_cache(versions: nil)
       meta
       repo_uri
@@ -144,6 +168,18 @@ module Gemstar
 
     def expand_metadata_template(value)
       value.to_s.gsub("{gem_name}", gem_name)
+    end
+
+    def format_registry_release_date(datetime)
+      if datetime.to_s.match?(/\A\d{4}-\d{2}-\d{2}\z/)
+        date = Date.strptime(datetime.to_s, "%Y-%m-%d")
+        return date.strftime("%b #{date.day}, %Y")
+      end
+
+      time = Time.parse(datetime.to_s).utc
+      time.strftime("%b #{time.day}, %Y")
+    rescue ArgumentError
+      nil
     end
 
   end

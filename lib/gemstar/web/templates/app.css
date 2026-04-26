@@ -566,12 +566,25 @@
         flex: 0 0 auto;
         margin-left: auto;
       }
+      .revision-card-heading {
+        display: inline-flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        min-width: 0;
+      }
       .revision-card h5 {
         margin: 0;
         font-size: 1.55rem;
         line-height: 1.1;
         color: var(--ink);
         min-width: 0;
+      }
+      .revision-release-date {
+        color: var(--grey);
+        font-size: 0.86rem;
+        font-weight: 600;
+        white-space: nowrap;
       }
       .revision-markup {
         padding: 0.7rem;

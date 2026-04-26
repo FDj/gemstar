@@ -1,7 +1,8 @@
 # Change Log
 
-## Unreleased
+## 1.1.1
 
+- Server: Show release dates for changelog entries.
 - Fix GitHub release discovery with direct tag-page fallback and paginated GitHub tags support.
 - Add changelog_uri fallback for GitHub repos with no changelog_uri metadata.
 - Fix change log display for aws, herb, and pagy gems.

@@ -14,7 +14,7 @@ module Gemstar
   module Web
     class App < Roda
       MISSING_METADATA = Object.new
-      CACHE_VERSION = "v6"
+      CACHE_VERSION = "v7"
 
       class << self
         def build(projects:, config_home:, cache_warmer: nil)
@@ -838,7 +838,10 @@ module Gemstar
           <article class="revision-card revision-#{section[:kind]}#{status_class}">
             <header class="revision-card-header">
               <div class="revision-card-titlebar">
-                <h5>#{h(section[:title] || section[:version])}</h5>
+                <div class="revision-card-heading">
+                  <h5>#{h(section[:title] || section[:version])}</h5>
+                  #{render_release_date(section[:release_date])}
+                </div>
                 <div class="revision-card-actions">
                   #{title_links.join}
                 </div>
@@ -849,6 +852,12 @@ module Gemstar
             </div>
           </article>
         HTML
+      end
+
+      def render_release_date(release_date)
+        return "" if release_date.to_s.empty?
+
+        %(<span class="revision-release-date" title="Estimated release date">#{h(release_date)}</span>)
       end
 
       def grouped_change_sections(gem_state)
@@ -896,6 +905,7 @@ module Gemstar
         return change_sections_cache[cache_key] = [] if sections.nil? || sections.empty?
 
         previous_version = gem_state[:old_version]
+        release_dates = resolved_release_dates(metadata, sections.keys, gem_state)
 
         rendered_sections = sections.keys.filter_map do |version|
           kind = section_kind(version, previous_version, current_version, gem_state[:status])
@@ -907,6 +917,7 @@ module Gemstar
             title: content[:title],
             kind: kind,
             previous_version: previous_section_version(sections.keys, version),
+            release_date: release_date_for(release_dates, version),
             html: content[:html]
           }
         end
@@ -930,6 +941,38 @@ module Gemstar
           force_refresh: true
         )
         cached_sections.merge(refreshed_sections || {})
+      end
+
+      def resolved_release_dates(metadata, versions, gem_state)
+        changelog = Gemstar::ChangeLog.new(metadata)
+        cached_dates = changelog.release_dates(versions: versions, cache_only: true) || {}
+        return cached_dates unless selected_gem_missing_release_dates?(gem_state, versions, cached_dates)
+
+        fetched_dates = changelog.release_dates(versions: versions, cache_only: false) || {}
+        cached_dates.merge(fetched_dates)
+      rescue StandardError
+        {}
+      end
+
+      def release_date_for(release_dates, version)
+        release_dates.find do |candidate_version, _date|
+          normalize_release_version_key(candidate_version) == normalize_release_version_key(version)
+        end&.last
+      end
+
+      def selected_gem_missing_release_dates?(gem_state, versions, release_dates)
+        return false unless @selected_gem && gem_state[:name] == @selected_gem[:name]
+
+        requested_versions = Array(versions).map { |version| normalize_release_version_key(version) }.compact
+        dated_versions = release_dates.keys.map { |version| normalize_release_version_key(version) }.compact
+        (requested_versions - dated_versions).any?
+      end
+
+      def normalize_release_version_key(version)
+        value = version.to_s.strip
+        return nil if value.empty?
+
+        value.sub(/\Av/i, "")
       end
 
       def relevant_package_versions(gem_state, metadata)
