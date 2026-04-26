@@ -1,5 +1,11 @@
 # Change Log
 
+## Unreleased
+
+- Fix GitHub release discovery with direct tag-page fallback and paginated GitHub tags support.
+- Add changelog_uri fallback for GitHub repos with no changelog_uri metadata.
+- Fix change log display for aws, herb, and pagy gems.
+
 ## 1.1
 
 - Server: Add **JavaScript package support** to browse change logs for your project's packages. This currently

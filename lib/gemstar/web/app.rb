@@ -2,6 +2,7 @@ require "cgi"
 require "erb"
 require "uri"
 require "kramdown"
+require "nokogiri"
 require "roda"
 
 begin
@@ -1034,7 +1035,7 @@ module Gemstar
 
       def strip_leading_version_heading(text, heading_version)
         stripped = text.sub(/\A\s*#+\s*v?#{Regexp.escape(heading_version)}\s*\n+/i, "")
-        return strip_leading_hash_separator(stripped) unless stripped == text
+        return strip_leading_heading_separator(stripped) unless stripped == text
 
         lines = text.lines
         return text if lines.empty?
@@ -1048,11 +1049,11 @@ module Gemstar
 
         remaining = lines.drop(1)
         remaining.shift while remaining.first&.strip&.empty?
-        strip_leading_hash_separator(remaining.join)
+        strip_leading_heading_separator(remaining.join)
       end
 
-      def strip_leading_hash_separator(text)
-        text.sub(/\A\s*#{Regexp.escape("#")}{4,}\s*\n+/, "")
+      def strip_leading_heading_separator(text)
+        text.sub(/\A\s*(?:#{Regexp.escape("#")}{4,}|[-=]{3,})\s*\n+/, "")
       end
 
       def compare_versions(left, right)

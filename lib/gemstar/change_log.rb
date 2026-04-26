@@ -161,6 +161,9 @@ module Gemstar
       repo_uri = @metadata.repo_uri(cache_only: cache_only, force_refresh: force_refresh)
       return [] if repo_uri.nil? || repo_uri.empty?
 
+      meta = @metadata.meta(cache_only: cache_only, force_refresh: force_refresh)
+      candidates += changelog_uri_markdown_candidates(meta["changelog_uri"]) if meta
+
       changelog_source = metadata_changelog_source(repo_uri, cache_only: cache_only, force_refresh: force_refresh)
       return [] unless changelog_source
 
@@ -169,12 +172,35 @@ module Gemstar
       end
 
       # Add the gem's changelog_uri last as it's usually not the most parsable:
-      meta = @metadata.meta(cache_only: cache_only, force_refresh: force_refresh)
       candidates += [Gemstar::GitHub::github_blob_to_raw(meta["changelog_uri"])] if meta
 
       candidates.flatten!
       candidates.uniq!
       candidates.compact!
+
+      candidates
+    end
+
+    def changelog_uri_markdown_candidates(changelog_uri)
+      raw_uri = Gemstar::GitHub::github_blob_to_raw(changelog_uri)
+      return [] if raw_uri.to_s.empty?
+
+      candidates = []
+      candidates << raw_uri if raw_uri.match?(/\.(?:md|markdown|rdoc|txt)\z/i)
+
+      begin
+        uri = URI(raw_uri)
+        path = uri.path.to_s
+        if path.end_with?("/")
+          uri.path = "#{path.chomp("/")}.md"
+          candidates << uri.to_s
+        elsif File.extname(path).empty?
+          uri.path = "#{path}.md"
+          candidates << uri.to_s
+        end
+      rescue URI::InvalidURIError
+        nil
+      end
 
       candidates
     end
