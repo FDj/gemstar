@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## 1.2
 
 - Server: Cache warmer now pre-fetches package detail pages so browsing warmed gems is faster.
 - Server: Manual browser reloads now refresh the selected package details, including metadata and release notes caches.
