@@ -64,13 +64,13 @@ module Gemstar
       repo
     end
 
-    def changelog_sections(versions: nil, cache_only: false, force_refresh: false)
+    def changelog_sections(versions: nil, cache_only: false, force_refresh: false, use_github_cli: false)
       requested_versions = Array(versions).compact
       changelog = Gemstar::ChangeLog.new(self)
       if requested_versions.empty?
         changelog.sections(cache_only: cache_only, force_refresh: force_refresh)
       else
-        changelog.sections_for_versions(requested_versions, cache_only: cache_only, force_refresh: force_refresh)
+        changelog.sections_for_versions(requested_versions, cache_only: cache_only, force_refresh: force_refresh, use_github_cli: use_github_cli)
       end
     end
 

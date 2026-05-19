@@ -1,6 +1,8 @@
 require_relative "command"
+require "rack/mock"
 require "socket"
 require "shellwords"
+require "uri"
 require "rbconfig"
 
 module Gemstar
@@ -45,7 +47,9 @@ module Gemstar
         projects = load_projects
         log_loaded_projects(projects)
         cache_warmer = build_cache_warmer
-        app = Gemstar::Web::App.build(projects: projects, config_home: Gemstar::Config.home_directory, cache_warmer: cache_warmer)
+        web_app = Gemstar::Web::App.build(projects: projects, config_home: Gemstar::Config.home_directory, cache_warmer: cache_warmer)
+        cache_warmer.detail_cache_fetcher = build_detail_cache_fetcher(web_app)
+        app = web_app
         app = Gemstar::RequestLogger.new(app, io: $stderr) if debug_request_logging?
 
         puts "Gemstar server listening on http://#{bind}:#{port}"
@@ -183,13 +187,73 @@ module Gemstar
       end
 
       def start_background_cache_refresh(projects, cache_warmer)
-        package_states = projects.flat_map do |project|
-          project.gem_states(from_revision_id: "worktree", to_revision_id: "worktree")
+        package_states = projects.flat_map.with_index do |project, project_index|
+          from_revision_id = project.default_from_revision_id
+          to_revision_id = "worktree"
+          states = project.gem_states(from_revision_id: from_revision_id, to_revision_id: to_revision_id)
+          detail_cache_contexts = detail_cache_contexts_for(
+            project: project,
+            project_index: project_index,
+            from_revision_id: from_revision_id,
+            to_revision_id: to_revision_id,
+            package_states: states
+          )
+
+          states.map do |state|
+            state.merge(detail_cache_contexts: detail_cache_contexts_for_package(state, detail_cache_contexts))
+          end
         end
 
         return nil if package_states.empty?
 
         cache_warmer.enqueue_many(package_states)
+      end
+
+      def detail_cache_contexts_for(project:, project_index:, from_revision_id:, to_revision_id:, package_states:)
+        default_filter = package_states.any? { |state| state[:status] != :unchanged } ? "updated" : "all"
+        default_scope = project.package_scope_options.map { |option| option[:id] } == ["gems"] ? "gems" : "all"
+
+        [
+          {
+            project: project_index,
+            from: from_revision_id,
+            to: to_revision_id,
+            filter: default_filter,
+            scope: default_scope
+          },
+          {
+            project: project_index,
+            from: from_revision_id,
+            to: to_revision_id,
+            filter: "all",
+            scope: default_scope
+          }
+        ].uniq
+      end
+
+      def detail_cache_contexts_for_package(package_state, base_contexts)
+        package_scope = package_state[:package_scope]
+
+        base_contexts.flat_map do |context|
+          [
+            context,
+            context.merge(scope: package_scope)
+          ]
+        end.uniq
+      end
+
+      def build_detail_cache_fetcher(app)
+        lambda do |package_state, context|
+          params = context.merge(package: package_state[:name])
+          env = Rack::MockRequest.env_for(
+            "/detail?#{URI.encode_www_form(params)}",
+            "REQUEST_METHOD" => "GET",
+            "gemstar.detail_cache_warm" => true
+          )
+          response = app.call(env)
+          body = response[2]
+          body.close if body.respond_to?(:close)
+        end
       end
 
       def server_start_callback(projects, cache_warmer)

@@ -88,8 +88,13 @@ module Gemstar
       repo
     end
 
-    def changelog_sections(versions: nil, cache_only: false, force_refresh: false)
-      Gemstar::ChangeLog.new(self).sections(cache_only: cache_only, force_refresh: force_refresh)
+    def changelog_sections(versions: nil, cache_only: false, force_refresh: false, use_github_cli: false)
+      changelog = Gemstar::ChangeLog.new(self)
+      if use_github_cli && Array(versions).compact.any?
+        changelog.sections_for_versions(versions, cache_only: cache_only, force_refresh: force_refresh, use_github_cli: true)
+      else
+        changelog.sections(cache_only: cache_only, force_refresh: force_refresh)
+      end
     end
 
     def registry_release_dates(cache_only: false, force_refresh: false)
