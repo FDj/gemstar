@@ -5,10 +5,11 @@ module Gemstar
   class CacheWarmer
     DEFAULT_THREADS = 10
 
-    def initialize(io: $stderr, debug: false, thread_count: DEFAULT_THREADS)
+    def initialize(io: $stderr, debug: false, thread_count: DEFAULT_THREADS, detail_cache_fetcher: nil)
       @io = io
       @debug = debug
       @thread_count = thread_count
+      @detail_cache_fetcher = detail_cache_fetcher
       @mutex = Mutex.new
       @condition = ConditionVariable.new
       @queue = []
@@ -20,6 +21,8 @@ module Gemstar
       @total = 0
       @completed_count = 0
     end
+
+    attr_writer :detail_cache_fetcher
 
     def enqueue_many(package_states)
       states = normalize_package_states(package_states)
@@ -120,11 +123,20 @@ module Gemstar
 
     def warm_cache_for_package(package_state)
       metadata = metadata_adapter_for(package_state)
-      return unless metadata
+      metadata&.warm_cache(versions: package_versions(package_state))
 
-      metadata.warm_cache(versions: package_versions(package_state))
+      warm_detail_cache_for_package(package_state)
     rescue StandardError => e
       log "Cache refresh failed for #{package_label(package_state)}: #{e.class}: #{e.message}"
+    end
+
+    def warm_detail_cache_for_package(package_state)
+      fetcher = @detail_cache_fetcher
+      return unless fetcher
+
+      Array(package_state[:detail_cache_contexts]).each do |context|
+        fetcher.call(package_state, context)
+      end
     end
 
     def log_progress(package_name, current)
