@@ -19,6 +19,12 @@
   const emptyDetailHtml = <%= empty_detail_html_json %>;
   const packageCollectionLabel = <%= (@selected_project&.package_collection_label || "Packages").downcase.dump %>;
   const detailDisclosureStorageKey = "gemstar.detailDisclosureOpen";
+  const pageWasReloaded = (() => {
+    const navigationEntry = performance.getEntriesByType && performance.getEntriesByType("navigation")[0];
+    if (navigationEntry) return navigationEntry.type === "reload";
+    return performance.navigation && performance.navigation.type === 1;
+  })();
+  let pendingManualDetailRefresh = pageWasReloaded;
 
   const visibleGemLinks = () => gemLinks.filter((link) => !link.hidden);
   const currentSelectedIndex = () => visibleGemLinks().findIndex((link) => link.classList.contains("is-selected"));
@@ -170,7 +176,15 @@
     </section>
   `;
 
-  const fetchDetail = (url, historyMode = "push") => {
+  const fetchDetail = (url, historyMode = "push", options = {}) => {
+    const requestUrl = new URL(url, window.location.origin);
+    if (options.refresh) {
+      requestUrl.searchParams.set("refresh", "1");
+    }
+    if (options.useGh) {
+      requestUrl.searchParams.set("use_gh", "1");
+      requestUrl.searchParams.set("refresh", "1");
+    }
     const normalizedUrl = new URL(url, window.location.origin).toString();
     const requestToken = ++detailRequestToken;
     activeDetailUrl = normalizedUrl;
@@ -180,7 +194,7 @@
       replaceDetail(loadingDetailHtml(normalizedUrl));
     }, 1000);
 
-    fetch(url, { headers: { "X-Requested-With": "gemstar-detail" } })
+    fetch(requestUrl.toString(), { headers: { "X-Requested-With": "gemstar-detail" } })
       .then((response) => response.text())
       .then((html) => {
         stopDetailLoading();
@@ -232,7 +246,8 @@
         window.history.replaceState({}, "", pageUrl);
       }
       if (detailNeedsInitialFetch()) {
-        fetchDetail(detailLink.dataset.detailUrl || detailLink.href, requested ? "none" : "replace");
+        fetchDetail(detailLink.dataset.detailUrl || detailLink.href, requested ? "none" : "replace", { refresh: pendingManualDetailRefresh });
+        pendingManualDetailRefresh = false;
       }
       return;
     }
@@ -241,7 +256,11 @@
 
     const firstVisibleLink = visibleGemLinks()[0];
     if (firstVisibleLink) {
-      activateGemLink(firstVisibleLink, "replace", true);
+      const refresh = pendingManualDetailRefresh;
+      pendingManualDetailRefresh = false;
+      syncSidebarSelection(firstVisibleLink.dataset.gemName, true);
+      fetchDetail(firstVisibleLink.dataset.detailUrl || firstVisibleLink.href, "replace", { refresh });
+      focusSidebar();
     }
   };
 
@@ -308,6 +327,16 @@
       syncSidebarSelection(null, true);
     });
   }
+
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-detail-use-gh]");
+    if (!button || !detailPanel || !detailPanel.dataset.detailUrl) return;
+
+    event.preventDefault();
+    button.disabled = true;
+    button.textContent = "Checking...";
+    fetchDetail(detailPanel.dataset.detailUrl, "none", { refresh: true, useGh: true });
+  });
 
   const navigate = (params) => {
     const url = new URL(window.location.href);

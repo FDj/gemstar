@@ -59,13 +59,15 @@ module Gemstar
         r.get "detail" do
           request_cache_key = detail_request_cache_key(r.params)
           request_cache = self.class.opts[:detail_request_cache]
-          if request_cache_key && request_cache.key?(request_cache_key)
+          refresh_detail = detail_refresh_requested?(r.params)
+          if request_cache_key && !refresh_detail && request_cache.key?(request_cache_key)
             next request_cache[request_cache_key]
           end
+          request_cache.delete(request_cache_key) if request_cache_key && refresh_detail
 
           load_state(r.params)
-          prioritize_selected_gem
-          detail_html = render_detail
+          prioritize_selected_gem unless r.env["gemstar.detail_cache_warm"]
+          detail_html = render_detail(force_refresh: refresh_detail, use_github_cli: detail_use_github_cli_requested?(r.params))
           request_cache[request_cache_key] = detail_html if request_cache_key
           detail_html
         end
@@ -129,6 +131,14 @@ module Gemstar
         end.max || 0
       rescue StandardError
         0
+      end
+
+      def detail_refresh_requested?(params)
+        %w[1 true yes].include?(params["refresh"].to_s.downcase)
+      end
+
+      def detail_use_github_cli_requested?(params)
+        %w[1 true yes].include?(params["use_gh"].to_s.downcase)
       end
 
       def page_title
@@ -480,10 +490,10 @@ module Gemstar
         HTML
       end
 
-      def render_detail
+      def render_detail(force_refresh: false, use_github_cli: false)
         return empty_detail_html unless @selected_gem
 
-        metadata = metadata_for(@selected_gem, refresh_if_missing: true)
+        metadata = metadata_for(@selected_gem, refresh_if_missing: true, force_refresh: force_refresh)
         cache_key = [
           CACHE_VERSION,
           @selected_project_index,
@@ -502,9 +512,9 @@ module Gemstar
           @selected_gem[:status]
         ]
         detail_cache = self.class.opts[:detail_html_cache]
-        return detail_cache[cache_key] if detail_cache.key?(cache_key)
+        return detail_cache[cache_key] if !force_refresh && detail_cache.key?(cache_key)
 
-        groups = grouped_change_sections(@selected_gem)
+        groups = grouped_change_sections(@selected_gem, force_refresh: force_refresh, use_github_cli: use_github_cli)
         detail_pending = detail_pending?(@selected_gem[:name], metadata, groups)
 
         detail_html = <<~HTML
@@ -860,8 +870,8 @@ module Gemstar
         %(<span class="revision-release-date" title="Estimated release date">#{h(release_date)}</span>)
       end
 
-      def grouped_change_sections(gem_state)
-        sections = change_sections(gem_state)
+      def grouped_change_sections(gem_state, force_refresh: false, use_github_cli: false)
+        sections = change_sections(gem_state, force_refresh: force_refresh, use_github_cli: use_github_cli)
         latest = sections.select { |section| section[:kind] == :future }
         current = sections.select { |section| section[:kind] == :current }
         previous = sections.select { |section| section[:kind] == :previous }
@@ -878,8 +888,8 @@ module Gemstar
         }
       end
 
-      def change_sections(gem_state)
-        metadata_hash = metadata_for(gem_state) || {}
+      def change_sections(gem_state, force_refresh: false, use_github_cli: false)
+        metadata_hash = metadata_for(gem_state, refresh_if_missing: force_refresh, force_refresh: force_refresh) || {}
         current_version = effective_package_version(gem_state, metadata_hash)
         cache_key = [
           CACHE_VERSION,
@@ -894,18 +904,18 @@ module Gemstar
           gem_state[:status]
         ]
         change_sections_cache = self.class.opts[:change_sections_cache]
-        return change_sections_cache[cache_key] if change_sections_cache.key?(cache_key)
+        return change_sections_cache[cache_key] if !force_refresh && change_sections_cache.key?(cache_key)
 
         return [] if gem_state[:new_version].nil? &&
           gem_state[:old_version].nil? &&
           (current_version.nil? || current_version.to_s.empty?)
         metadata = metadata_adapter_for(gem_state)
         return change_sections_cache[cache_key] = [] unless metadata
-        sections = resolved_sections(metadata, gem_state)
+        sections = resolved_sections(metadata, gem_state, force_refresh: force_refresh, use_github_cli: use_github_cli)
         return change_sections_cache[cache_key] = [] if sections.nil? || sections.empty?
 
         previous_version = gem_state[:old_version]
-        release_dates = resolved_release_dates(metadata, sections.keys, gem_state)
+        release_dates = resolved_release_dates(metadata, sections.keys, gem_state, force_refresh: force_refresh)
 
         rendered_sections = sections.keys.filter_map do |version|
           kind = section_kind(version, previous_version, current_version, gem_state[:status])
@@ -927,10 +937,10 @@ module Gemstar
         []
       end
 
-      def resolved_sections(metadata, gem_state)
+      def resolved_sections(metadata, gem_state, force_refresh: false, use_github_cli: false)
         changelog = Gemstar::ChangeLog.new(metadata)
-        cached_sections = changelog.sections(cache_only: true) || {}
-        return cached_sections unless selected_gem_requires_refresh?(gem_state, cached_sections)
+        cached_sections = force_refresh ? {} : changelog.sections(cache_only: true) || {}
+        return cached_sections unless force_refresh || selected_gem_requires_refresh?(gem_state, cached_sections)
 
         @metadata_cache.delete([gem_state[:package_scope], gem_state[:name]])
         metadata.meta(cache_only: false, force_refresh: true)
@@ -938,17 +948,18 @@ module Gemstar
         refreshed_sections = metadata.changelog_sections(
           versions: relevant_package_versions(gem_state, metadata),
           cache_only: false,
-          force_refresh: true
+          force_refresh: true,
+          use_github_cli: use_github_cli
         )
         cached_sections.merge(refreshed_sections || {})
       end
 
-      def resolved_release_dates(metadata, versions, gem_state)
+      def resolved_release_dates(metadata, versions, gem_state, force_refresh: false)
         changelog = Gemstar::ChangeLog.new(metadata)
-        cached_dates = changelog.release_dates(versions: versions, cache_only: true) || {}
+        cached_dates = force_refresh ? {} : changelog.release_dates(versions: versions, cache_only: true) || {}
         return cached_dates unless selected_gem_missing_release_dates?(gem_state, versions, cached_dates)
 
-        fetched_dates = changelog.release_dates(versions: versions, cache_only: false) || {}
+        fetched_dates = changelog.release_dates(versions: versions, cache_only: false, force_refresh: force_refresh) || {}
         cached_dates.merge(fetched_dates)
       rescue StandardError
         {}
@@ -1077,7 +1088,7 @@ module Gemstar
       end
 
       def strip_leading_version_heading(text, heading_version)
-        stripped = text.sub(/\A\s*#+\s*v?#{Regexp.escape(heading_version)}\s*\n+/i, "")
+        stripped = text.sub(/\A\s*#+\s*(?:Version\s+)?v?#{Regexp.escape(heading_version)}\b[^\n]*\n+/i, "")
         return strip_leading_heading_separator(stripped) unless stripped == text
 
         lines = text.lines
@@ -1085,8 +1096,8 @@ module Gemstar
 
         first_line = lines.first.to_s
         heading_like =
-          first_line.match?(/\A\s*v?#{Regexp.escape(heading_version)}\b/i) ||
-          first_line.match?(/\A\s*[\[(]?v?#{Regexp.escape(heading_version)}\b/i)
+          first_line.match?(/\A\s*(?:Version\s+)?v?#{Regexp.escape(heading_version)}\b/i) ||
+          first_line.match?(/\A\s*[\[(]?(?:Version\s+)?v?#{Regexp.escape(heading_version)}\b/i)
 
         return text unless heading_like
 
@@ -1105,26 +1116,26 @@ module Gemstar
         left.to_s <=> right.to_s
       end
 
-      def metadata_for(package_state_or_name, refresh_if_missing: false)
+      def metadata_for(package_state_or_name, refresh_if_missing: false, force_refresh: false)
         package_state = package_state_or_name.is_a?(Hash) ? package_state_or_name : { name: package_state_or_name, package_scope: "gems" }
         gem_name = package_state[:name]
         cache_key = [package_state[:package_scope], gem_name]
         cached = @metadata_cache[cache_key]
-        return nil if cached.equal?(MISSING_METADATA)
-        return cached if cached
+        return nil if !force_refresh && cached.equal?(MISSING_METADATA)
+        return cached if !force_refresh && cached
 
         if package_state[:package_scope] != "gems"
           metadata = local_package_metadata(package_state)
           adapter = metadata_adapter_for(package_state)
-          remote_metadata = adapter&.meta(cache_only: true)
+          remote_metadata = force_refresh ? nil : adapter&.meta(cache_only: true)
           remote_metadata = adapter&.meta(cache_only: false, force_refresh: true) if remote_metadata.nil? && refresh_if_missing
           metadata = metadata.compact.merge(remote_metadata || {})
           @metadata_cache[cache_key] = metadata || MISSING_METADATA
           return metadata
         end
 
-        metadata = Gemstar::RubyGemsMetadata.new(gem_name).meta(cache_only: true)
-        if metadata.nil? && refresh_if_missing
+        metadata = force_refresh ? nil : Gemstar::RubyGemsMetadata.new(gem_name).meta(cache_only: true)
+        if metadata.nil? && (refresh_if_missing || force_refresh)
           metadata = Gemstar::RubyGemsMetadata.new(gem_name).meta(cache_only: false, force_refresh: true)
         end
 
@@ -1305,14 +1316,25 @@ module Gemstar
         else
           %(<a href="#{h(fallback_url)}" target="_blank" rel="noreferrer">#{h(fallback_label)}</a>)
         end
+        github_cli_action = render_github_cli_release_button(version, repo_url)
 
         {
           version: version,
           title: version,
           kind: :current,
           previous_version: fallback_previous_version_for(gem_state, previous_sections),
-          html: "<p>No release information available. Check #{fallback_link} for more information.</p>"
+          html: "<p>No release information available. Check #{fallback_link} for more information.</p>#{github_cli_action}"
         }
+      end
+
+      def render_github_cli_release_button(version, repo_url)
+        return "" unless repo_url.to_s.include?("github.com")
+
+        <<~HTML
+          <div class="detail-inline-actions">
+            <button type="button" class="action" data-detail-use-gh data-release-version="#{h(version)}">Use GitHub CLI</button>
+          </div>
+        HTML
       end
 
       def fallback_previous_version_for(gem_state, previous_sections)

@@ -455,6 +455,12 @@
         background: #fff;
         padding: 0.5rem;
       }
+      .detail-inline-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        margin-top: 0.55rem;
+      }
       .detail-loading-shell {
         min-height: 14rem;
         display: grid;
