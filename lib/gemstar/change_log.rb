@@ -2,11 +2,16 @@
 require "cgi"
 require "date"
 require "json"
+require "open3"
 require "time"
+require "timeout"
+require "uri"
+require_relative "cache"
 
 module Gemstar
   class ChangeLog
     @@candidates_found = Hash.new(0)
+    GITHUB_CLI_TIMEOUT = 8
     DEFAULT_CHANGELOG_PATHS = %w[
       CHANGELOG.md releases.md CHANGES.md
       Changelog.md changelog.md ChangeLog.md
@@ -54,7 +59,7 @@ module Gemstar
       result
     end
 
-    def sections_for_versions(versions, cache_only: false, force_refresh: false)
+    def sections_for_versions(versions, cache_only: false, force_refresh: false, use_github_cli: false)
       requested_versions = normalize_requested_versions(versions)
       return {} if requested_versions.empty?
 
@@ -75,7 +80,8 @@ module Gemstar
             repo_uri,
             version,
             cache_only: false,
-            force_refresh: force_refresh
+            force_refresh: force_refresh,
+            use_github_cli: use_github_cli
           )
           result.merge!(specific_release) if specific_release
         end
@@ -378,17 +384,20 @@ module Gemstar
     end
 
     def parse_github_release_sections(cache_only: false, force_refresh: false)
-      begin
-        require "nokogiri"
-      rescue LoadError
-        return {}
-      end
-
       repo_uri = @metadata&.repo_uri(cache_only: cache_only, force_refresh: force_refresh)
       return {} unless repo_uri&.include?("github.com")
 
       url = github_releases_url(repo_uri)
       return {} unless url
+
+      api_sections = parse_github_api_release_sections(repo_uri, cache_only: cache_only, force_refresh: force_refresh)
+      return api_sections unless api_sections.empty?
+
+      begin
+        require "nokogiri"
+      rescue LoadError
+        return {}
+      end
 
       html = if cache_only
         Cache.peek("releases-#{url}")
@@ -506,11 +515,90 @@ module Gemstar
       "#{repo}/tags"
     end
 
-    def parse_specific_github_release_pages(repo_uri, version, cache_only:, force_refresh:)
+    def github_releases_api_url(repo_uri = @metadata&.repo_uri)
+      repo_path = github_repo_path(repo_uri)
+      return nil unless repo_path
+
+      "https://api.github.com/repos/#{repo_path}/releases"
+    end
+
+    def github_release_api_url(repo_uri, tag)
+      repo_path = github_repo_path(repo_uri)
+      return nil unless repo_path
+
+      "https://api.github.com/repos/#{repo_path}/releases/tags/#{URI.encode_www_form_component(tag)}"
+    end
+
+    def github_repo_path(repo_uri)
+      uri = URI(repo_uri.to_s)
+      return nil unless uri.host.to_s.end_with?("github.com")
+
+      segments = uri.path.to_s.split("/").reject(&:empty?)
+      return nil if segments.length < 2
+
+      segments.take(2).join("/")
+    rescue URI::InvalidURIError
+      nil
+    end
+
+    def parse_github_api_release_sections(repo_uri, cache_only:, force_refresh:)
+      url = github_releases_api_url(repo_uri)
+      return {} unless url
+
+      json = if cache_only
+        Cache.peek("releases-api-#{url}")
+      else
+        Cache.fetch("releases-api-#{url}", force: force_refresh) do
+          begin
+            URI.open(url, "Accept" => "application/vnd.github+json", read_timeout: 8)&.read
+          rescue => e
+            puts "#{url}: #{e}" if Gemstar.debug?
+            nil
+          end
+        end
+      end
+
+      parse_github_api_releases(json)
+    end
+
+    def parse_github_api_releases(json)
+      releases = JSON.parse(json.to_s)
+      releases = [releases] if releases.is_a?(Hash)
+      return {} unless releases.is_a?(Array)
+
+      releases.each_with_object({}) do |release, sections|
+        next unless release.is_a?(Hash)
+
+        tag_name = (release["tag_name"] || release["tagName"]).to_s
+        next if tag_name.empty?
+        next unless github_tag_matches_metadata?(tag_name)
+
+        version = normalize_github_tag_version(tag_name)
+        next if version.to_s.empty?
+
+        body = release["body"].to_s.strip
+        title = release["name"].to_s.strip
+        content = body.empty? ? title : body
+        next if content.empty?
+
+        sections[version] ||= ["## #{version}\n", content]
+      end
+    rescue JSON::ParserError
+      {}
+    end
+
+    def parse_specific_github_release_pages(repo_uri, version, cache_only:, force_refresh:, use_github_cli: false)
       return {} unless repo_uri&.include?("github.com")
       return {} if version.to_s.empty?
 
-      github_release_tag_urls(repo_uri, version).each do |url|
+      github_tag_candidates(version).each do |tag|
+        cli_section = parse_specific_github_cli_release(repo_uri, tag, cache_only: cache_only, force_refresh: force_refresh) if use_github_cli
+        return cli_section if cli_section && !cli_section.empty?
+
+        api_section = parse_specific_github_api_release(repo_uri, tag, cache_only: cache_only, force_refresh: force_refresh)
+        return api_section unless api_section.empty?
+
+        url = github_release_tag_url(repo_uri, tag)
         html = if cache_only
           Cache.peek("releases-#{url}")
         else
@@ -531,6 +619,62 @@ module Gemstar
       end
 
       {}
+    end
+
+    def parse_specific_github_cli_release(repo_uri, tag_name, cache_only:, force_refresh:)
+      repo_path = github_repo_path(repo_uri)
+      return {} unless repo_path
+
+      cache_key = "releases-gh-#{repo_path}-#{tag_name}"
+      json = if cache_only
+        Cache.peek(cache_key)
+      else
+        Cache.fetch(cache_key, force: force_refresh) do
+          fetch_github_cli_release_json(repo_path, tag_name)
+        end
+      end
+
+      parse_github_api_releases(json)
+    end
+
+    def fetch_github_cli_release_json(repo_path, tag_name)
+      stdout, _stderr, status = nil
+      Timeout.timeout(GITHUB_CLI_TIMEOUT) do
+        stdout, _stderr, status = Open3.capture3(
+          "gh",
+          "release",
+          "view",
+          tag_name,
+          "--repo",
+          repo_path,
+          "--json",
+          "body,name,tagName"
+        )
+      end
+
+      status.success? ? stdout : nil
+    rescue Errno::ENOENT, Timeout::Error
+      nil
+    end
+
+    def parse_specific_github_api_release(repo_uri, tag_name, cache_only:, force_refresh:)
+      url = github_release_api_url(repo_uri, URI.decode_www_form_component(tag_name.to_s))
+      return {} unless url
+
+      json = if cache_only
+        Cache.peek("releases-api-#{url}")
+      else
+        Cache.fetch("releases-api-#{url}", force: force_refresh) do
+          begin
+            URI.open(url, "Accept" => "application/vnd.github+json", read_timeout: 8)&.read
+          rescue => e
+            puts "#{url}: #{e}" if Gemstar.debug?
+            nil
+          end
+        end
+      end
+
+      parse_github_api_releases(json)
     end
 
     def parse_github_tag_sections(repo_uri, cache_only:, force_refresh:)
@@ -760,9 +904,13 @@ module Gemstar
 
     def github_release_tag_urls(repo_url, version)
       github_tag_candidates(version).map do |tag|
-        encoded_tag = URI.encode_www_form_component(tag)
-        "#{repo_url}/releases/tag/#{encoded_tag}"
+        github_release_tag_url(repo_url, tag)
       end.uniq
+    end
+
+    def github_release_tag_url(repo_url, tag)
+      encoded_tag = URI.encode_www_form_component(tag)
+      "#{repo_url}/releases/tag/#{encoded_tag}"
     end
 
     def github_tag_candidates(version)
