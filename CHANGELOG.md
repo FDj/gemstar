@@ -1,5 +1,12 @@
 # Change Log
 
+## Unreleased
+
+- Server: Cache warmer now pre-fetches package detail pages so browsing warmed gems is faster.
+- Server: Manual browser reloads now refresh the selected package details, including metadata and release notes caches.
+- Server: Fetch GitHub release bodies through the GitHub Releases API before falling back to HTML scraping.
+- Server: Add explicit "Use GitHub CLI" fallback for GitHub-backed release notes when automatic release discovery misses a page.
+
 ## 1.1.1
 
 - Server: Show release dates for changelog entries.
