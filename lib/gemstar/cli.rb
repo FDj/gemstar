@@ -5,7 +5,8 @@ module Gemstar
   class CLI < Thor
     package_name "gemstar"
 
-    map "-D" => "diff"
+    map "-D" => "diff",
+      "--version" => "version"
 
     class_option :verbose, type: :boolean, default: false, desc: "Enable verbose output"
     class_option :lockfile, type: :string, default: "Gemfile.lock", desc: "Lockfile path"
@@ -35,6 +36,11 @@ module Gemstar
 
     desc "cache SUBCOMMAND ...ARGS", "Manage gemstar caches"
     subcommand "cache", Gemstar::CacheCLI
+
+    desc "version", "Print gemstar version"
+    def version
+      puts Gemstar::VERSION
+    end
 
     # desc "pick", "Interactively cherry-pick and upgrade gems"
     # option :gem, type: :string, desc: "Gem name to cherry-pick"
