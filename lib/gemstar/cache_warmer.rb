@@ -1,5 +1,6 @@
 require "set"
 require "thread"
+require_relative "pypi_metadata"
 
 module Gemstar
   class CacheWarmer
@@ -18,6 +19,7 @@ module Gemstar
       @completed = Set.new
       @workers = []
       @started = false
+      @stopping = false
       @total = 0
       @completed_count = 0
     end
@@ -28,6 +30,8 @@ module Gemstar
       states = normalize_package_states(package_states)
 
       @mutex.synchronize do
+        return self if @stopping
+
         states.each do |package_state|
           key = package_key(package_state)
           next if @completed.include?(key) || @queued.include?(key) || @in_progress.include?(key)
@@ -74,6 +78,28 @@ module Gemstar
       @condition.broadcast
     end
 
+    def shutdown(timeout: 0.5)
+      workers = nil
+
+      @mutex.synchronize do
+        @stopping = true
+        @queue.clear
+        @queued.clear
+        @condition.broadcast
+        workers = @workers.dup
+      end
+
+      workers.each do |worker|
+        worker.join(timeout)
+        worker.kill if worker.alive?
+      end
+
+      @mutex.synchronize do
+        @workers.clear
+        @started = false
+      end
+    end
+
     def pending?(package_name)
       @mutex.synchronize do
         @queue.any? { |item| item[:name] == package_name || item.dig(:source, :package_name) == package_name } ||
@@ -97,9 +123,10 @@ module Gemstar
 
       loop do
         package_state = @mutex.synchronize do
-          while @queue.empty?
+          while @queue.empty? && !@stopping
             @condition.wait(@mutex)
           end
+          return if @stopping && @queue.empty?
 
           next_package = @queue.shift
           key = package_key(next_package)
@@ -180,6 +207,8 @@ module Gemstar
     end
 
     def metadata_adapter_for(package_state)
+      return Gemstar::PyPIMetadata.new(package_state[:name]) if package_state[:package_scope] == "python"
+
       if package_state[:package_scope] == "js"
         provider_gem = package_state.dig(:source, :provider_gem)
         return Gemstar::RubyGemsMetadata.new(provider_gem) unless provider_gem.to_s.empty?

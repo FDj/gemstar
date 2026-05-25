@@ -30,4 +30,15 @@ class CacheWarmerTest < Minitest::Test
     assert_equal "updated", calls.first.last[:filter]
     assert_equal "js", calls.last.last[:scope]
   end
+
+  def test_shutdown_stops_idle_workers
+    warmer = Gemstar::CacheWarmer.new(io: StringIO.new, thread_count: 2)
+
+    warmer.send(:start_workers_unlocked)
+    assert_equal 2, warmer.instance_variable_get(:@workers).length
+
+    warmer.shutdown(timeout: 0.1)
+
+    assert_empty warmer.instance_variable_get(:@workers)
+  end
 end
