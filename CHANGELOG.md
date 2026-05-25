@@ -1,5 +1,13 @@
 # Change Log
 
+## 1.3
+
+- **uv projects** are now supported with our new `uv.lock` file parser!
+- Server: Details heading is now sticky.
+- Server: Changed display of available versions to be more clear and concise.
+- CLI: Improve message shown when no supported project files are found.
+- CLI: Add `--version` to print the Gemstar version.
+
 ## 1.2
 
 - Server: Cache warmer now pre-fetches package detail pages so browsing warmed gems is faster.
