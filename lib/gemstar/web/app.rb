@@ -1,9 +1,13 @@
 require "cgi"
 require "erb"
+require "json"
+require "open3"
+require "shellwords"
 require "uri"
 require "kramdown"
 require "nokogiri"
 require "roda"
+require_relative "../pypi_metadata"
 
 begin
   require "kramdown-parser-gfm"
@@ -14,7 +18,7 @@ module Gemstar
   module Web
     class App < Roda
       MISSING_METADATA = Object.new
-      CACHE_VERSION = "v7"
+      CACHE_VERSION = "v10"
 
       class << self
         def build(projects:, config_home:, cache_warmer: nil)
@@ -80,6 +84,23 @@ module Gemstar
 
           response["Content-Type"] = "text/plain; charset=utf-8"
           File.read(project.gemfile_path)
+        end
+
+        r.post "actions", String do |action_id|
+          response["Content-Type"] = "application/json; charset=utf-8"
+
+          project_index = selected_project_index(r.params["project"])
+          project = @projects[project_index]
+          action = project_action(action_id, project)
+          unless project && action
+            response.status = 404
+            next JSON.generate({ ok: false, error: "Unknown project action." })
+          end
+
+          result = run_project_action(project, action)
+          clear_runtime_state!(project)
+          response.status = result[:ok] ? 200 : 500
+          JSON.generate(result)
         end
 
         r.on "projects", String do |project_id|
@@ -203,6 +224,7 @@ module Gemstar
 
       def selected_filter(raw_filter, raw_gem_name)
         return "all" if @gem_states.empty?
+        return "all" unless @gem_states.any? { |gem| gem[:status] != :unchanged }
         return raw_filter if %w[updated all].include?(raw_filter)
 
         selected_gem = @gem_states.find { |gem| gem[:name] == raw_gem_name }
@@ -404,11 +426,214 @@ module Gemstar
               <strong>#{@gem_states.count { |gem| gem[:status] != :unchanged }}</strong> changes from #{h(selected_from_revision_label)} to #{h(selected_to_revision_label)}
             </div>
             <div class="toolbar-actions">
-              <button type="button" class="action" disabled="disabled">bundle install</button>
-              <button type="button" class="action action-primary" disabled="disabled">bundle update</button>
+              #{render_project_action_buttons}
             </div>
           </section>
         HTML
+      end
+
+      def render_project_action_buttons
+        actions = project_actions
+        actions.map do |action|
+          primary = action[:primary] ? " action-primary" : ""
+          command_label = project_action_display_command(@selected_project, action)
+          <<~HTML
+            <button
+              type="button"
+              class="action#{primary}"
+              data-project-action="#{h(action[:id])}"
+              data-project-action-command="#{h(command_label)}"
+            >#{h(action[:label])}</button>
+          HTML
+        end.join
+      end
+
+      def project_actions(project = @selected_project)
+        return [] unless project
+
+        actions = []
+        if project.gemfile? || project.lockfile?
+          actions << {
+            id: "bundle_install",
+            label: "#{bundle_command(project).join(" ")} install",
+            command: [*bundle_command(project), "install"]
+          }
+          actions << {
+            id: "bundle_update",
+            label: "#{bundle_command(project).join(" ")} update",
+            command: [*bundle_command(project), "update"],
+            primary: true
+          }
+        end
+
+        if project.uv_lock?
+          actions << {
+            id: "uv_sync",
+            label: "uv sync",
+            command: %w[uv sync]
+          }
+          actions << {
+            id: "uv_lock_upgrade",
+            label: "uv lock --upgrade",
+            command: %w[uv lock --upgrade],
+            primary: true
+          }
+        end
+
+        if project.package_lock?
+          actions << {
+            id: "npm_install",
+            label: "npm install",
+            command: %w[npm install]
+          }
+          actions << {
+            id: "npm_update",
+            label: "npm update",
+            command: %w[npm update],
+            primary: true
+          }
+        elsif project.package_json?
+          actions << {
+            id: "npm_install",
+            label: "npm install",
+            command: %w[npm install]
+          }
+        end
+
+        if project.importmap?
+          actions << {
+            id: "importmap_update",
+            label: "bin/importmap update",
+            command: %w[bin/importmap update]
+          }
+        end
+
+        actions
+      end
+
+      def project_action(action_id, project)
+        project_actions(project).find { |action| action[:id] == action_id }
+      end
+
+      def run_project_action(project, action)
+        command = project_action_command(project, action)
+        shell_command = project_action_shell_command(project, command)
+        stdout, stderr, status = Open3.capture3(project_action_environment, user_shell, "-lc", shell_command)
+        {
+          ok: status.success?,
+          action: action[:id],
+          command: shell_command,
+          output: truncated_action_output([stdout, stderr].reject(&:empty?).join("\n").strip)
+        }
+      rescue Errno::ENOENT => e
+        {
+          ok: false,
+          action: action[:id],
+          command: project_action_display_command(project, action),
+          output: e.message
+        }
+      end
+
+      def project_action_display_command(project, action)
+        project_action_shell_command(project, project_action_command(project, action))
+      end
+
+      def project_action_shell_command(project, command)
+        "cd #{Shellwords.escape(project.directory)} && #{Shellwords.join(command)}"
+      end
+
+      def project_action_command(project, action)
+        return action[:command] unless project_uses_mise?(project)
+
+        mise = mise_executable
+        return action[:command] unless mise
+
+        [mise, "exec", "--", *mise_command(action[:command])]
+      end
+
+      def mise_command(command)
+        executable, *arguments = command
+        case executable
+        when /\Abin\//
+          ["ruby", executable, *arguments]
+        when "bundle"
+          ["ruby", "-S", executable, *arguments]
+        else
+          command
+        end
+      end
+
+      def project_action_environment
+        {
+          "BUNDLE_BIN_PATH" => nil,
+          "BUNDLE_APP_CONFIG" => nil,
+          "BUNDLE_GEMFILE" => nil,
+          "BUNDLE_PATH" => nil,
+          "BUNDLE_WITHOUT" => nil,
+          "BUNDLER_VERSION" => nil,
+          "GEM_HOME" => nil,
+          "GEM_PATH" => nil,
+          "GEM_ROOT" => nil,
+          "MY_RUBY_HOME" => nil,
+          "RBENV_VERSION" => nil,
+          "RUBYLIB" => nil,
+          "RUBYGEMS_GEMDEPS" => nil,
+          "RUBYOPT" => nil,
+          "rvm_path" => nil,
+          "rvm_ruby_string" => nil
+        }
+      end
+
+      def user_shell
+        shell = ENV["SHELL"].to_s
+        shell.empty? ? "/bin/sh" : shell
+      end
+
+      def bundle_command(project)
+        File.file?(File.join(project.directory, "bin", "bundle")) ? %w[bin/bundle] : %w[bundle]
+      end
+
+      def project_uses_mise?(project)
+        directory = project.directory
+        loop do
+          return true if File.file?(File.join(directory, "mise.toml")) ||
+            File.file?(File.join(directory, ".mise.toml")) ||
+            File.file?(File.join(directory, ".ruby-version"))
+
+          parent = File.dirname(directory)
+          break if parent == directory
+
+          directory = parent
+        end
+
+        false
+      end
+
+      def mise_executable
+        ENV["PATH"].to_s.split(File::PATH_SEPARATOR).each do |directory|
+          path = File.join(directory, "mise")
+          return path if File.executable?(path)
+        end
+
+        [
+          "/opt/homebrew/bin/mise",
+          "/usr/local/bin/mise",
+          File.expand_path("~/.local/bin/mise")
+        ].find { |path| File.executable?(path) }
+      end
+
+      def truncated_action_output(output)
+        return output if output.length <= 8_000
+
+        "#{output[0, 8_000]}\n\n... output truncated ..."
+      end
+
+      def clear_runtime_state!(project)
+        project&.clear_cache! if project.respond_to?(:clear_cache!)
+        self.class.opts[:change_sections_cache].clear
+        self.class.opts[:detail_html_cache].clear
+        self.class.opts[:detail_request_cache].clear
+        self.class.opts[:metadata_cache].clear
       end
 
       def selected_from_revision_label
@@ -520,6 +745,7 @@ module Gemstar
         detail_html = <<~HTML
           <section class="detail" data-detail-panel tabindex="0" data-detail-pending="#{detail_pending}" data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, package: @selected_gem[:name]))}">
             #{render_detail_hero(metadata)}
+            #{render_selected_dependency_details}
             #{render_detail_loading_notice if detail_pending}
             #{render_detail_revision_panel(groups)}
           </section>
@@ -551,11 +777,13 @@ module Gemstar
       end
 
       def empty_detail_html(loading: false)
+        package_label = @selected_project&.package_item_label || "package"
+
         <<~HTML
           <section class="detail" data-detail-panel tabindex="0">
             <div class="empty-panel">
-              <h2>#{loading ? "Loading details" : "No gem selected"}</h2>
-              <p>#{loading ? "Preparing the selected gem details." : "Choose a gem from the list to inspect its current version and changelog revisions."}</p>
+              <h2>#{loading ? "Loading details" : "No #{h(package_label)} selected"}</h2>
+              <p>#{loading ? "Preparing the selected #{h(package_label)} details." : "Choose a #{h(package_label)} from the list to inspect its current version and changelog revisions."}</p>
             </div>
           </section>
         HTML
@@ -563,10 +791,7 @@ module Gemstar
 
       def render_detail_hero(metadata)
         description = metadata&.dig("info")
-        bundle_origins = Array(@selected_gem[:bundle_origins])
-        requirement_names = selected_gem_requirements
         bundled_version = detail_bundled_version(metadata)
-        added_on = selected_gem_added_on
         title_url = metadata&.dig("homepage_uri")
         title_url = repo_url_for(@selected_gem, metadata: metadata) if title_url.to_s.empty?
         title_markup = if title_url.to_s.empty?
@@ -585,10 +810,17 @@ module Gemstar
                 #{render_detail_links(metadata)}
               </div>
               <div class="detail-subtitle">#{render_detail_subtitle(description)}</div>
-              #{render_dependency_details(bundle_origins, requirement_names, added_on)}
             </div>
           </section>
         HTML
+      end
+
+      def render_selected_dependency_details
+        render_dependency_details(
+          Array(@selected_gem[:bundle_origins]),
+          selected_gem_requirements,
+          selected_gem_added_on
+        )
       end
 
       def render_detail_subtitle(description)
@@ -764,6 +996,16 @@ module Gemstar
           else
             ["npm (#{h(remote)})"]
           end
+        when :pypi
+          remote = source[:remote]
+          registry_url = source[:registry_url]
+          if remote.to_s.empty? && registry_url.to_s.empty?
+            ["PyPI"]
+          elsif remote.to_s.empty?
+            ["PyPI (#{h(registry_url)})"]
+          else
+            ["PyPI (#{h(remote)})"]
+          end
         else
           []
         end
@@ -802,11 +1044,24 @@ module Gemstar
       def render_detail_revision_panel(groups)
         <<~HTML
           <section class="revision-panel">
-            #{render_revision_group("Latest", groups[:latest], empty_message: nil) if groups[:latest].any?}
-            #{render_revision_group(current_section_title, groups[:current], empty_message: "No changelog entries in this revision range.")}
-            #{render_revision_group("Earlier changes", groups[:previous], empty_message: nil) if groups[:previous].any?}
+            #{render_revision_group("Available", groups[:latest], empty_message: nil) if groups[:latest].any?}
+            #{render_current_revision_group(groups)}
+            #{render_previous_revision_group(groups)}
           </section>
         HTML
+      end
+
+      def render_current_revision_group(groups)
+        return "" if unchanged_worktree_package? && groups[:previous].any?
+
+        render_revision_group(current_section_title, groups[:current], empty_message: "No changelog entries in this revision range.")
+      end
+
+      def render_previous_revision_group(groups)
+        return "" if groups[:previous].empty?
+
+        title = unchanged_worktree_package? ? "Included in #{selected_from_revision_label}" : "Earlier changes"
+        render_revision_group(title, groups[:previous], empty_message: nil)
       end
 
       def render_detail_loading_notice
@@ -983,12 +1238,15 @@ module Gemstar
         value = version.to_s.strip
         return nil if value.empty?
 
-        value.sub(/\Av/i, "")
+        value = value.sub(/\Av/i, "")
+        Gem::Version.new(value.gsub(/-[\w\-]+$/, "")).canonical_segments.join(".")
+      rescue ArgumentError
+        value
       end
 
       def relevant_package_versions(gem_state, metadata)
         metadata_hash = metadata_for(gem_state) || {}
-        [
+        explicit_versions = [
           gem_state[:old_version],
           gem_state[:new_version],
           gem_state[:raw_old_version],
@@ -996,6 +1254,27 @@ module Gemstar
           gem_state.dig(:source, :package_version),
           metadata_hash["version"]
         ].compact
+
+        (explicit_versions + registry_versions_between(metadata, gem_state, metadata_hash)).uniq
+      end
+
+      def registry_versions_between(metadata, gem_state, metadata_hash)
+        return [] unless metadata.respond_to?(:registry_release_dates)
+
+        lower_bound = gem_state[:old_version] || gem_state[:raw_old_version] || gem_state.dig(:source, :package_version)
+        current_version = effective_package_version(gem_state, metadata_hash)
+        upper_bound = metadata_hash["version"] || current_version
+        return [] if lower_bound.to_s.empty? || upper_bound.to_s.empty?
+
+        release_dates = metadata.registry_release_dates(cache_only: true)
+        release_dates = metadata.registry_release_dates(cache_only: false) if release_dates.nil? || release_dates.empty?
+
+        release_dates.keys.select do |version|
+          compare_versions(version, lower_bound) == 1 &&
+            compare_versions(version, upper_bound) <= 0
+        end
+      rescue StandardError
+        []
       end
 
       def selected_gem_requires_refresh?(gem_state, cached_sections)
@@ -1107,7 +1386,7 @@ module Gemstar
       end
 
       def strip_leading_heading_separator(text)
-        text.sub(/\A\s*(?:#{Regexp.escape("#")}{4,}|[-=]{3,})\s*\n+/, "")
+        text.sub(/\A\s*(?:#{Regexp.escape("#")}{4,}|[-=~`^"']{3,})\s*\n+/, "")
       end
 
       def compare_versions(left, right)
@@ -1154,6 +1433,19 @@ module Gemstar
         package_version = source[:package_version].to_s
         registry_url = source[:registry_url].to_s
         provider_gem = source[:provider_gem].to_s
+        if package_state[:package_scope] == "python"
+          package_name = package_state[:name].to_s if package_name.empty?
+          package_version = (package_state[:new_version] || package_state[:old_version]).to_s if package_version.empty?
+          registry_url = "https://pypi.org/project/#{package_name}/" if registry_url.empty? && !package_name.empty?
+
+          return {
+            "info" => "Python package `#{package_name}` locked to `#{package_version}` in uv.lock",
+            "project_uri" => registry_url.empty? ? nil : registry_url,
+            "homepage_uri" => absolute_url?(remote) ? remote : nil,
+            "source_code_uri" => repo_url.empty? ? nil : repo_url
+          }
+        end
+
         package_name = package_state[:name].to_s if package_name.empty? && source[:type] == :npm
         package_version = (package_state[:new_version] || package_state[:old_version]).to_s if package_version.empty? && source[:type] == :npm
         registry_url = "https://www.npmjs.com/package/#{package_name}" if registry_url.empty? && !package_name.empty?
@@ -1201,6 +1493,7 @@ module Gemstar
 
       def metadata_adapter_for(package_state)
         return Gemstar::RubyGemsMetadata.new(package_state[:name]) if package_state[:package_scope] == "gems"
+        return Gemstar::PyPIMetadata.new(package_state[:name]) if package_state[:package_scope] == "python"
         return nil unless package_state[:package_scope] == "js"
 
         provider_gem = package_state.dig(:source, :provider_gem)
@@ -1249,6 +1542,10 @@ module Gemstar
         else
           "Changes from #{selected_from_revision_label} to #{selected_to_revision_label}"
         end
+      end
+
+      def unchanged_worktree_package?
+        @selected_to_revision_id == "worktree" && @selected_gem && @selected_gem[:status] == :unchanged
       end
 
       def range_label(gem_state)

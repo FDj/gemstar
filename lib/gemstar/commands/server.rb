@@ -1,4 +1,5 @@
 require_relative "command"
+require_relative "../project"
 require "rack/mock"
 require "socket"
 require "shellwords"
@@ -33,6 +34,8 @@ module Gemstar
       end
 
       def run
+        projects = load_projects
+
         restart_with_rerun if reload_requested?
 
         require "rackup"
@@ -44,7 +47,6 @@ module Gemstar
         Gemstar::Config.ensure_home_directory!
         @port = resolve_port
 
-        projects = load_projects
         log_loaded_projects(projects)
         cache_warmer = build_cache_warmer
         web_app = Gemstar::Web::App.build(projects: projects, config_home: Gemstar::Config.home_directory, cache_warmer: cache_warmer)
@@ -54,15 +56,19 @@ module Gemstar
 
         puts "Gemstar server listening on http://#{bind}:#{port}"
         puts "Config home: #{Gemstar::Config.home_directory}"
-        Rackup::Server.start(
-          app: app,
-          server: "webrick",
-          Host: bind,
-          Port: port,
-          AccessLog: [],
-          Logger: Gemstar::WEBrickLogger.new($stderr, WEBrick::BasicLog::INFO),
-          StartCallback: server_start_callback(projects, cache_warmer)
-        )
+        begin
+          Rackup::Server.start(
+            app: app,
+            server: "webrick",
+            Host: bind,
+            Port: port,
+            AccessLog: [],
+            Logger: Gemstar::WEBrickLogger.new($stderr, WEBrick::BasicLog::INFO),
+            StartCallback: server_start_callback(projects, cache_warmer)
+          )
+        ensure
+          stop_background_cache_refresh(cache_warmer)
+        end
       end
 
       private
@@ -147,6 +153,9 @@ module Gemstar
 
       def load_projects
         project_inputs.map { |input| Gemstar::Project.from_cli_argument(input) }
+      rescue Gemstar::Project::UnsupportedProjectError => e
+        warn e.message
+        exit 1
       end
 
       def log_loaded_projects(projects)
@@ -258,12 +267,24 @@ module Gemstar
 
       def server_start_callback(projects, cache_warmer)
         proc do
-          Thread.new do
+          @server_start_thread = Thread.new do
+            Thread.current.name = "gemstar-server-start" if Thread.current.respond_to?(:name=)
             sleep 0.15
             start_background_cache_refresh(projects, cache_warmer)
             launch_browser
+          rescue StandardError => e
+            warn "Background cache refresh failed: #{e.class}: #{e.message}"
           end
         end
+      end
+
+      def stop_background_cache_refresh(cache_warmer)
+        cache_warmer.shutdown if cache_warmer.respond_to?(:shutdown)
+
+        return unless @server_start_thread&.alive?
+
+        @server_start_thread.kill
+        @server_start_thread.join(0.5)
       end
 
       def launch_browser

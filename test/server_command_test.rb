@@ -1,12 +1,51 @@
 # frozen_string_literal: true
 
 require "minitest/autorun"
+require "fileutils"
+require "tmpdir"
 
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 require "gemstar/commands/server"
 
 class ServerCommandTest < Minitest::Test
   FakeProject = Struct.new(:package_scope_options)
+
+  def setup
+    @tmpdir = Dir.mktmpdir("gemstar-server-test")
+  end
+
+  def teardown
+    FileUtils.remove_entry(@tmpdir) if defined?(@tmpdir) && File.directory?(@tmpdir)
+  end
+
+  def test_unsupported_project_exits_with_helpful_message
+    command = Gemstar::Commands::Server.new(project: @tmpdir)
+
+    stdout, stderr = capture_io do
+      error = assert_raises(SystemExit) { command.run }
+
+      assert_equal 1, error.status
+    end
+
+    assert_empty stdout
+    assert_includes stderr, "Directory #{@tmpdir} does not contain a recognized project file."
+    assert_includes stderr, "Only Gemfile, Gemfile.lock, config/importmap.rb, package.json, package-lock.json, and uv.lock are supported."
+    refute_includes stderr, "from "
+  end
+
+  def test_reload_validates_projects_before_starting_watcher
+    command = Gemstar::Commands::Server.new(project: @tmpdir, reload: true)
+
+    stdout, stderr = capture_io do
+      error = assert_raises(SystemExit) { command.run }
+
+      assert_equal 1, error.status
+    end
+
+    assert_empty stdout
+    assert_includes stderr, "Directory #{@tmpdir} does not contain a recognized project file."
+    refute_includes stdout, "Starting gemstar server in reload mode"
+  end
 
   def test_detail_cache_contexts_cover_default_and_package_scope_variants
     command = Gemstar::Commands::Server.new({})

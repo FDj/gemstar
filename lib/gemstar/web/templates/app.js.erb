@@ -2,6 +2,7 @@
   const projectSelect = document.querySelector("[data-project-select]");
   const fromSelect = document.querySelector("[data-from-select]");
   const toSelect = document.querySelector("[data-to-select]");
+  const projectActionButtons = Array.from(document.querySelectorAll("[data-project-action]"));
   const sidebarPanel = document.querySelector("[data-sidebar-panel]");
   const filterButtons = Array.from(document.querySelectorAll("[data-filter-button]"));
   const ecosystemButtons = Array.from(document.querySelectorAll("[data-ecosystem-button]"));
@@ -52,6 +53,73 @@
   };
   const focusDetail = () => {
     if (detailPanel) detailPanel.focus({ preventScroll: true });
+  };
+  const closeCommandErrorDialog = () => {
+    const overlay = document.querySelector("[data-command-error-dialog]");
+    if (overlay) overlay.remove();
+  };
+  const showCommandErrorDialog = (command, output) => {
+    closeCommandErrorDialog();
+
+    const overlay = document.createElement("div");
+    overlay.className = "command-dialog-backdrop";
+    overlay.dataset.commandErrorDialog = "true";
+
+    const dialog = document.createElement("section");
+    dialog.className = "command-dialog";
+    dialog.setAttribute("role", "alertdialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-labelledby", "command-dialog-title");
+
+    const header = document.createElement("header");
+    header.className = "command-dialog-header";
+
+    const title = document.createElement("h2");
+    title.id = "command-dialog-title";
+    title.textContent = "Command failed";
+
+    const commandLine = document.createElement("p");
+    commandLine.className = "command-dialog-command";
+    commandLine.textContent = command;
+
+    header.append(title, commandLine);
+
+    const outputField = document.createElement("pre");
+    outputField.className = "command-dialog-output";
+    outputField.tabIndex = 0;
+    outputField.textContent = output || "No output captured.";
+
+    const actions = document.createElement("div");
+    actions.className = "command-dialog-actions";
+
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.className = "action";
+    copyButton.textContent = "Copy";
+    copyButton.addEventListener("click", () => {
+      navigator.clipboard.writeText(`Command failed: ${command}\n\n${output || ""}`)
+        .then(() => {
+          copyButton.textContent = "Copied";
+          setTimeout(() => {
+            copyButton.textContent = "Copy";
+          }, 1400);
+        })
+        .catch(() => {
+          outputField.focus();
+        });
+    });
+
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "action action-primary";
+    closeButton.textContent = "Close";
+    closeButton.addEventListener("click", closeCommandErrorDialog);
+
+    actions.append(copyButton, closeButton);
+    dialog.append(header, outputField, actions);
+    overlay.append(dialog);
+    document.body.append(overlay);
+    closeButton.focus({ preventScroll: true });
   };
   const storedDetailDisclosureOpen = () => {
     try {
@@ -338,6 +406,55 @@
     fetchDetail(detailPanel.dataset.detailUrl, "none", { refresh: true, useGh: true });
   });
 
+  projectActionButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const actionId = button.dataset.projectAction;
+      const command = button.dataset.projectActionCommand || actionId;
+      if (!actionId) return;
+      if (!window.confirm(`Run ${command}?`)) return;
+
+      const originalText = button.textContent;
+      projectActionButtons.forEach((actionButton) => {
+        actionButton.disabled = true;
+      });
+      button.textContent = "Running...";
+
+      const params = new URLSearchParams();
+      params.set("project", "<%= selected_project_index %>");
+
+      fetch(`/actions/${encodeURIComponent(actionId)}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          "X-Requested-With": "gemstar-action"
+        },
+        body: params.toString()
+      })
+        .then((response) => response.json().then((payload) => ({ response, payload })))
+        .then(({ response, payload }) => {
+          if (!response.ok || !payload.ok) {
+            const output = payload && payload.output ? payload.output : "";
+            const failedCommand = payload && payload.command ? payload.command : command;
+            showCommandErrorDialog(failedCommand, output);
+            button.textContent = originalText;
+            projectActionButtons.forEach((actionButton) => {
+              actionButton.disabled = false;
+            });
+            return;
+          }
+
+          window.location.reload();
+        })
+        .catch((error) => {
+          showCommandErrorDialog(command, error.message);
+          button.textContent = originalText;
+          projectActionButtons.forEach((actionButton) => {
+            actionButton.disabled = false;
+          });
+        });
+    });
+  });
+
   const navigate = (params) => {
     const url = new URL(window.location.href);
     Object.entries(params).forEach(([key, value]) => {
@@ -374,6 +491,12 @@
   }
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.querySelector("[data-command-error-dialog]")) {
+      event.preventDefault();
+      closeCommandErrorDialog();
+      return;
+    }
+
     const tagName = document.activeElement && document.activeElement.tagName;
     if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") return;
 
