@@ -54,6 +54,26 @@ class ChangeLogTest < Minitest::Test
       candidates.index("https://raw.githubusercontent.com/ddnexus/pagy/master/CHANGELOG.md")
   end
 
+  def test_rst_changelog_name_variations_are_default_candidates
+    paths = Gemstar::ChangeLog::DEFAULT_CHANGELOG_PATHS
+
+    assert_includes paths, "CHANGELOG.rst"
+    assert_includes paths, "Changelog.rst"
+    assert_includes paths, "ChangeLog.rst"
+    assert_includes paths, "changes.rst"
+    assert_includes paths, "History.rst"
+  end
+
+  def test_extensionless_changelog_uri_adds_rst_candidate
+    candidates = Gemstar::ChangeLog.new(FakeMetadata.new).send(
+      :changelog_uri_markdown_candidates,
+      "https://example.com/changelog"
+    )
+
+    assert_includes candidates, "https://example.com/changelog.md"
+    assert_includes candidates, "https://example.com/changelog.rst"
+  end
+
   def test_github_tag_dates_are_extracted_from_tag_history
     html = <<~HTML
       <div>
@@ -92,5 +112,60 @@ class ChangeLogTest < Minitest::Test
     changelog = Gemstar::ChangeLog.new(FakeMetadata.new)
 
     assert_equal({ "1.0.0" => ["notes"] }, changelog.send(:merge_section_sources, { "1.0.0" => ["notes"] }, { "2.0.0" => ["repo release"] }))
+  end
+
+  def test_rst_version_headings_are_parsed
+    changelog = Gemstar::ChangeLog.new(FakeMetadata.new)
+    content = <<~RST
+      Changelog
+      =========
+
+      45.0.4 - 2025-06-09
+      ~~~~~~~~~~~~~~~~~~~
+
+      * Fixed decrypting PKCS#8 files encrypted with SHA1-RC4.
+    RST
+
+    changelog.stub :content, content do
+      sections = changelog.send(:parse_changelog_sections)
+
+      assert_includes sections.keys, "45.0.4"
+      section_text = sections["45.0.4"].flatten.join
+      assert_includes section_text, "Fixed decrypting PKCS#8"
+      refute_includes section_text, "~~~~~~~~~~~~~~~~~~~"
+      refute_includes section_text, ".. _v45-0-3"
+    end
+  end
+
+  def test_starting_with_version_headings_are_parsed
+    changelog = Gemstar::ChangeLog.new(FakeMetadata.new)
+    content = <<~TEXT
+      + Starting with version 2.22, please use the GitHub UI to compare tags.
+
+      + Version 2.21 (2021.11.06)
+      - Much improved support for C11.
+    TEXT
+
+    changelog.stub :content, content do
+      sections = changelog.send(:parse_changelog_sections)
+
+      assert_includes sections.keys, "2.22"
+      assert_includes sections["2.22"].flatten.join, "please use the GitHub UI"
+    end
+  end
+
+  def test_sections_for_versions_matches_zero_padded_version_segments
+    changelog = Gemstar::ChangeLog.new(FakeMetadata.new)
+    content = <<~TEXT
+      + Version 3.00 (2026.02.06)
+      - No API changes / functionality changes.
+    TEXT
+
+    changelog.stub :content, content do
+      sections = changelog.sections_for_versions(["3.0"])
+
+      assert_includes sections.keys, "3.00"
+      assert_includes sections["3.00"].flatten.join, "No API changes"
+    end
   end
 end

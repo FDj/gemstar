@@ -17,7 +17,12 @@ module Gemstar
       Changelog.md changelog.md ChangeLog.md
       Changes.md changes.md
       HISTORY.md History.md history.md
-      History CHANGELOG.rdoc
+      History
+      CHANGELOG.rst Changelog.rst changelog.rst ChangeLog.rst
+      CHANGES.rst Changes.rst changes.rst
+      HISTORY.rst History.rst history.rst
+      CHANGES Changes
+      CHANGELOG.rdoc
     ].freeze
 
     def initialize(metadata)
@@ -38,7 +43,7 @@ module Gemstar
       return @sections if !cache_only && defined?(@sections) && !force_refresh
 
       metadata_key = @metadata.respond_to?(:cache_key) ? @metadata.cache_key : @metadata.gem_name
-      cache_key = "sections-v5-#{metadata_key}"
+      cache_key = "sections-v6-#{metadata_key}"
       serialized = if cache_only
         Cache.peek(cache_key)
       else
@@ -182,7 +187,10 @@ module Gemstar
       value = version.to_s.strip
       return nil if value.empty?
 
-      value.sub(/\Av/i, "")
+      value = value.sub(/\Av/i, "")
+      Gem::Version.new(value.gsub(/-[\w\-]+$/, "")).canonical_segments.join(".")
+    rescue ArgumentError
+      value
     end
 
     # Extract a version token from a heading line, preferring explicit version forms
@@ -241,7 +249,7 @@ module Gemstar
       return [] if raw_uri.to_s.empty?
 
       candidates = []
-      candidates << raw_uri if raw_uri.match?(/\.(?:md|markdown|rdoc|txt)\z/i)
+      candidates << raw_uri if raw_uri.match?(/\.(?:md|markdown|rdoc|rst|txt)\z/i)
 
       begin
         uri = URI(raw_uri)
@@ -249,8 +257,12 @@ module Gemstar
         if path.end_with?("/")
           uri.path = "#{path.chomp("/")}.md"
           candidates << uri.to_s
+          uri.path = "#{path.chomp("/")}.rst"
+          candidates << uri.to_s
         elsif File.extname(path).empty?
           uri.path = "#{path}.md"
+          candidates << uri.to_s
+          uri.path = "#{path}.rst"
           candidates << uri.to_s
         end
       rescue URI::InvalidURIError
@@ -305,8 +317,10 @@ module Gemstar
       /^\s*(?:[-*]\s+)?(?:#+|=+)\s*\[*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\]*\s*(?:—|–|-)\s*\d{4}-\d{2}-\d{2}\b/,
       /^\s*(?:[-*]\s+)?(?:#+|=+)\s*(?:Version\s+)?(?:(?:[^\s\d][^\s]*\s+)+)\[*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\]*(?:\s*[-(].*)?/i,
       /^\s*(?:[-*]\s+)?(?:#+|=+)\s*(?:Version\s+)?\[*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\]*(?:\s*[-(].*)?/i,
+      /^\s*(?:[-+*]\s+)?Starting with version\s+v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])/i,
       /^\s*(?:[-*]\s+)?(?:Version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])(?:\s*[-(].*)?/i
     ]
+    RST_ADORNMENT_PATTERN = /^\s*[=\-~`^"']{3,}\s*$/
 
     def parse_changelog_sections(cache_only: false, force_refresh: false)
       # If the fetched content looks like a GitHub Releases HTML page, return {}
@@ -336,6 +350,8 @@ module Gemstar
       lines.each do |line|
         # Convert rdoc to markdown:
         line = line.gsub(/^=+/) { |m| "#" * m.length }
+        next if line.match?(/^\s*\.\.\s+_v?[\w.-]+:/)
+        next if line.match?(RST_ADORNMENT_PATTERN)
 
         m = VERSION_PATTERNS.lazy.map { |re| line.match(re) }.find(&:itself)
 
