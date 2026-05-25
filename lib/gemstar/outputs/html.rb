@@ -78,6 +78,7 @@ module Gemstar
 
       def icon_for(info)
         return "📦" if info[:package_scope] == "js"
+        return "🐍" if info[:package_scope] == "python"
         return "🐙" if info[:homepage_url]&.include?("github.com")
 
         "💎"

@@ -72,7 +72,7 @@ To examine a specific Gemfile.lock, pass it like this:
 gemstar diff --lockfile=~/MyProject/Gemfile.lock
 ```
 
-To diff a project from anywhere, pass the project directory or a supported project file. In project mode, gemstar includes Ruby gems plus JS packages from `importmap.rb` and `package-lock.json` when present:
+To diff a project from anywhere, pass the project directory or a supported project file. In project mode, gemstar includes Ruby gems, JS packages from `importmap.rb` and `package-lock.json`, and Python packages from `uv.lock` when present:
 
 ```shell
 gemstar diff --project ~/Code/my-app
@@ -83,6 +83,7 @@ To filter a project diff down to one ecosystem:
 ```shell
 gemstar diff --project ~/Code/my-app --ecosystem js
 gemstar diff --project ~/Code/my-app --ecosystem gems
+gemstar diff --project ~/Code/my-app --ecosystem python
 ```
 
 To write markdown instead of html:

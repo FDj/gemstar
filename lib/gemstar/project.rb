@@ -1,8 +1,26 @@
 require "time"
+require_relative "uv_lock_file"
 
 module Gemstar
   class Project
     REVISION_HISTORY_LIMIT = 100
+    SUPPORTED_PROJECT_FILES = [
+      "Gemfile",
+      "Gemfile.lock",
+      "config/importmap.rb",
+      "package.json",
+      "package-lock.json",
+      "uv.lock"
+    ].freeze
+
+    class UnsupportedProjectError < ArgumentError
+      def initialize(directory)
+        super(<<~MESSAGE.chomp)
+          Directory #{File.expand_path(directory)} does not contain a recognized project file.
+          Only #{Project.supported_project_files_sentence} are supported.
+        MESSAGE
+      end
+    end
 
     attr_reader :directory
     attr_reader :gemfile_path
@@ -10,6 +28,7 @@ module Gemstar
     attr_reader :importmap_path
     attr_reader :package_json_path
     attr_reader :package_lock_path
+    attr_reader :uv_lock_path
     attr_reader :name
 
     def self.from_cli_argument(input)
@@ -20,26 +39,34 @@ module Gemstar
         basename = File.basename(expanded_input)
         directory =
           case basename
-          when "Gemfile", "package.json", "package-lock.json"
+          when "Gemfile", "Gemfile.lock", "package.json", "package-lock.json", "uv.lock"
             File.dirname(expanded_input)
           when "importmap.rb"
-            File.dirname(File.dirname(expanded_input))
-          else
-            nil
+            File.dirname(expanded_input, 2)
           end
       end
 
-      raise ArgumentError, "No supported project files found for #{input}" unless directory
-      raise ArgumentError, "No supported project files found for #{input}" unless supported_project_directory?(directory)
+      unless directory
+        unsupported_directory = File.directory?(expanded_input) ? expanded_input : File.dirname(expanded_input)
+        raise UnsupportedProjectError, unsupported_directory
+      end
+
+      raise UnsupportedProjectError, directory unless supported_project_directory?(directory)
 
       new(directory: directory)
     end
 
     def self.supported_project_directory?(directory)
       File.file?(File.join(directory, "Gemfile")) ||
+        File.file?(File.join(directory, "Gemfile.lock")) ||
         File.file?(File.join(directory, "config", "importmap.rb")) ||
         File.file?(File.join(directory, "package.json")) ||
-        File.file?(File.join(directory, "package-lock.json"))
+        File.file?(File.join(directory, "package-lock.json")) ||
+        File.file?(File.join(directory, "uv.lock"))
+    end
+
+    def self.supported_project_files_sentence
+      "#{SUPPORTED_PROJECT_FILES[0...-1].join(", ")}, and #{SUPPORTED_PROJECT_FILES[-1]}"
     end
 
     def initialize(directory:)
@@ -49,10 +76,12 @@ module Gemstar
       @importmap_path = File.join(@directory, "config", "importmap.rb")
       @package_json_path = File.join(@directory, "package.json")
       @package_lock_path = File.join(@directory, "package-lock.json")
+      @uv_lock_path = File.join(@directory, "uv.lock")
       @name = File.basename(@directory)
       @lockfile_cache = {}
       @importmap_cache = {}
       @package_lock_cache = {}
+      @uv_lock_cache = {}
       @gem_states_cache = {}
       @gem_added_on_cache = {}
       @history_cache = {}
@@ -104,6 +133,30 @@ module Gemstar
       @current_package_lock ||= Gemstar::PackageLockFile.new(path: package_lock_path)
     end
 
+    def uv_lock?
+      File.file?(uv_lock_path)
+    end
+
+    def current_uv_lock
+      return nil unless uv_lock?
+
+      @current_uv_lock ||= Gemstar::UvLockFile.new(path: uv_lock_path)
+    end
+
+    def clear_cache!
+      @current_lockfile = nil
+      @current_importmap = nil
+      @current_package_lock = nil
+      @current_uv_lock = nil
+      @lockfile_cache.clear
+      @importmap_cache.clear
+      @package_lock_cache.clear
+      @uv_lock_cache.clear
+      @gem_states_cache.clear
+      @gem_added_on_cache.clear
+      @history_cache.clear
+    end
+
     def revision_history(limit: REVISION_HISTORY_LIMIT)
       history_for_paths(tracked_git_paths, limit: limit)
     end
@@ -133,7 +186,7 @@ module Gemstar
     end
 
     def revision_options(limit: REVISION_HISTORY_LIMIT)
-      [{ id: "worktree", label: "Worktree", description: "Current Gemfile.lock in the working tree" }] +
+      [{ id: "worktree", label: "Worktree", description: "Current project files in the working tree" }] +
         revision_history(limit: limit).map do |revision|
           {
             id: revision[:id],
@@ -147,6 +200,7 @@ module Gemstar
       scopes = []
       scopes << :gems if gemfile? || lockfile?
       scopes << :js if importmap? || package_lock? || package_json?
+      scopes << :python if uv_lock?
       scopes
     end
 
@@ -161,6 +215,15 @@ module Gemstar
 
     def package_collection_label
       package_scopes == [:gems] ? "Gems" : "Packages"
+    end
+
+    def package_item_label
+      case package_scopes
+      when [:gems] then "gem"
+      when [:js] then "JavaScript package"
+      when [:python] then "Python package"
+      else "package"
+      end
     end
 
     def lockfile_for_revision(revision_id)
@@ -206,6 +269,21 @@ module Gemstar
       return nil if content.nil? || content.empty?
 
       @package_lock_cache[cache_key] = Gemstar::PackageLockFile.new(content: content)
+    end
+
+    def uv_lock_for_revision(revision_id)
+      cache_key = revision_id || "worktree"
+      return @uv_lock_cache[cache_key] if @uv_lock_cache.key?(cache_key)
+      return @uv_lock_cache[cache_key] = current_uv_lock if revision_id.nil? || revision_id == "worktree"
+      return nil unless uv_lock?
+
+      relative_uv_lock_path = git_repo.relative_path(uv_lock_path)
+      return nil if relative_uv_lock_path.nil?
+
+      content = git_repo.try_git_command(["show", "#{revision_id}:#{relative_uv_lock_path}"])
+      return nil if content.nil? || content.empty?
+
+      @uv_lock_cache[cache_key] = Gemstar::UvLockFile.new(content: content)
     end
 
     def gem_states(from_revision_id: default_from_revision_id, to_revision_id: "worktree")
@@ -298,7 +376,32 @@ module Gemstar
         }
       end
 
-      @gem_states_cache[cache_key] = (gem_states + js_states + npm_states).sort_by { |gem| [gem[:name], gem[:package_scope], gem[:package_source_file].to_s] }
+      from_uv_lock = uv_lock_for_revision(from_revision_id)
+      to_uv_lock = uv_lock_for_revision(to_revision_id)
+      from_python_specs = from_uv_lock&.specs || {}
+      to_python_specs = to_uv_lock&.specs || {}
+      python_states = (from_python_specs.keys | to_python_specs.keys).map do |package_name|
+        old_version = from_python_specs[package_name]
+        new_version = to_python_specs[package_name]
+        effective_uv_lock = new_version ? to_uv_lock : from_uv_lock
+
+        {
+          name: package_name,
+          package_scope: "python",
+          package_type_label: "Python",
+          package_source_file: :uv_lock,
+          old_version: old_version,
+          new_version: new_version,
+          status: gem_status(old_version, new_version),
+          version_label: version_label(old_version, new_version),
+          platform: nil,
+          source: effective_uv_lock&.source_for(package_name),
+          bundle_origins: [],
+          bundle_origin_labels: []
+        }
+      end
+
+      @gem_states_cache[cache_key] = (gem_states + js_states + npm_states + python_states).sort_by { |gem| [gem[:name], gem[:package_scope], gem[:package_source_file].to_s] }
     end
 
     def package_added_on(package_name, package_scope:, revision_id: "worktree", source_file: nil)
@@ -310,8 +413,12 @@ module Gemstar
           [importmap_path, method(:importmap_for_revision)]
         elsif source_file == :package_lock
           [package_lock_path, method(:package_lock_for_revision)]
+        elsif source_file == :uv_lock
+          [uv_lock_path, method(:uv_lock_for_revision)]
         elsif package_scope == "js"
           [importmap_path, method(:importmap_for_revision)]
+        elsif package_scope == "python"
+          [uv_lock_path, method(:uv_lock_for_revision)]
         else
           [lockfile_path, method(:lockfile_for_revision)]
         end
@@ -346,14 +453,17 @@ module Gemstar
       current_specs = current_lockfile&.specs || {}
       current_importmap_specs = current_importmap&.specs || {}
       current_package_lock_specs = current_package_lock&.specs || {}
+      current_uv_lock_specs = current_uv_lock&.specs || {}
 
       revision_history(limit: REVISION_HISTORY_LIMIT).find do |revision|
         revision_lockfile = lockfile_for_revision(revision[:id])
         revision_importmap = importmap_for_revision(revision[:id])
         revision_package_lock = package_lock_for_revision(revision[:id])
+        revision_uv_lock = uv_lock_for_revision(revision[:id])
         (revision_lockfile && revision_lockfile.specs != current_specs) ||
           (revision_importmap && revision_importmap.specs != current_importmap_specs) ||
-          (revision_package_lock && revision_package_lock.specs != current_package_lock_specs)
+          (revision_package_lock && revision_package_lock.specs != current_package_lock_specs) ||
+          (revision_uv_lock && revision_uv_lock.specs != current_uv_lock_specs)
       end&.dig(:id)
     end
 
@@ -384,7 +494,7 @@ module Gemstar
     end
 
     def tracked_git_paths
-      [gemfile_path, lockfile_path, importmap_path, package_json_path, package_lock_path, *importmap_vendor_paths].filter_map do |path|
+      [gemfile_path, lockfile_path, importmap_path, package_json_path, package_lock_path, uv_lock_path, *importmap_vendor_paths].filter_map do |path|
         next unless File.file?(path)
 
         git_repo.relative_path(path)

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "command"
+require_relative "../pypi_metadata"
 require "concurrent-ruby"
 require "tmpdir"
 require "pathname"
@@ -70,9 +71,9 @@ module Gemstar
       def normalize_ecosystem(value)
         normalized = value.to_s.strip.downcase
         return "all" if normalized.empty?
-        return normalized if %w[all gems js].include?(normalized)
+        return normalized if %w[all gems js python].include?(normalized)
 
-        raise Thor::Error, "Unsupported ecosystem #{value.inspect}. Expected one of: all, gems, js"
+        raise Thor::Error, "Unsupported ecosystem #{value.inspect}. Expected one of: all, gems, js, python"
       end
 
       def normalize_since(value)
@@ -210,6 +211,8 @@ module Gemstar
       def metadata_for(package_state)
         if package_state[:package_scope] == "js"
           Gemstar::NpmMetadata.new(package_state[:name])
+        elsif package_state[:package_scope] == "python"
+          Gemstar::PyPIMetadata.new(package_state[:name])
         else
           Gemstar::RubyGemsMetadata.new(package_state[:name])
         end
@@ -315,6 +318,8 @@ module Gemstar
             "importmap"
           when :package_lock
             "package-lock"
+          when :uv_lock
+            "uv.lock"
           else
             package_state[:package_scope]
           end
