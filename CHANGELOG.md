@@ -2,7 +2,8 @@
 
 ## 1.3
 
-- **uv projects** are now supported with our new `uv.lock` file parser!
+- **Python uv projects** are now supported with our new `uv.lock` file parser and pypi package support!
+- Changelogs in rst format are now supported.
 - Server: Details heading is now sticky.
 - Server: Changed display of available versions to be more clear and concise.
 - CLI: Improve message shown when no supported project files are found.
