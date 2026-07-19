@@ -4,6 +4,16 @@
 
 - **Python uv projects** are now supported with our new `uv.lock` file parser and pypi package support!
 - Changelogs in rst format are now supported.
+- Changelogs: Fix parsing of documentation percentages, linked version headings, and version-first headings with dotted dates.
+- Changelogs: Do not treat version-looking prose inside release notes as a new release heading.
+- Changelogs: Prefer repository-branch changelogs when gem metadata points to a release-pinned file that may omit its own release.
+- Changelogs: Discover extensionless changelog files and direct GitHub changelog links, including Roda and Selenium release histories.
+- Changelogs: Correct known upstream release-heading typos through package metadata, including Thruster 0.1.23.
+- Server: Sort changelog cards with semantic version comparison so Selenium's `4.x` releases appear ahead of `3.142.x` and `3.141.x`.
+- Server: Render linked changelog version headings without Markdown brackets.
+- Server: Keep the details focus ring visible around its sticky header.
+- Server: Keep keyboard-selected sidebar packages visible below the sticky filter header.
+- Documentation: List Python package support in the README and gem metadata.
 - Server: Details heading is now sticky.
 - Server: Changed display of available versions to be more clear and concise.
 - CLI: Improve message shown when no supported project files are found.

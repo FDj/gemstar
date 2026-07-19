@@ -3,7 +3,7 @@
 [![JRuby Build](https://github.com/FDj/gemstar/workflows/JRuby%20Build/badge.svg)](https://github.com/FDj/gemstar/actions)
 
 # Gemstar
-Helps you keep track of your gems and JavaScript packages.
+Helps you keep track of your Ruby gems, JavaScript packages, and Python packages.
 
 ## Installation
 

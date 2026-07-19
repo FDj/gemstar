@@ -8,8 +8,8 @@ Gem::Specification.new do |s|
   s.authors = ["Florian Dejako"]
   s.email = ["fdejako@gmail.com"]
   s.homepage = "https://github.com/FDj/gemstar"
-  s.summary = "Making sense of gems."
-  s.description = "Gem changelog viewer and more, but starting as a changelog viewer for bundled gems."
+  s.summary = "Changelog viewer for Ruby, JavaScript, and Python dependencies."
+  s.description = "Browse and compare changelogs for Ruby gems, JavaScript packages, and Python packages in your projects."
 
   s.metadata = {
     "bug_tracker_uri" => "https://github.com/FDj/gemstar/issues",
