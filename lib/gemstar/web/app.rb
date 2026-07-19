@@ -1187,7 +1187,7 @@ module Gemstar
           }
         end
 
-        change_sections_cache[cache_key] = rendered_sections.sort_by { |section| section_sort_key(section) }
+        change_sections_cache[cache_key] = sort_change_sections(rendered_sections)
       rescue StandardError
         []
       end
@@ -1321,17 +1321,14 @@ module Gemstar
         :previous if compare_versions(version, lower_bound) <= 0
       end
 
-      def section_sort_key(section)
-        kind_rank = { future: 0, current: 1, previous: 2 }.fetch(section[:kind], 9)
-        [kind_rank, -sortable_version_number(section[:version])]
-      end
+      def sort_change_sections(sections)
+        kind_ranks = { future: 0, current: 1, previous: 2 }
+        sections.sort do |left, right|
+          kind_comparison = kind_ranks.fetch(left[:kind], 9) <=> kind_ranks.fetch(right[:kind], 9)
+          next kind_comparison unless kind_comparison.zero?
 
-      def sortable_version_number(version)
-        Gem::Version.new(version.to_s.gsub(/-[\w\-]+$/, "")).segments.take(6).each_with_index.sum do |segment, index|
-          segment.to_i * (10**(10 - index * 2))
+          compare_versions(right[:version], left[:version])
         end
-      rescue ArgumentError
-        0
       end
 
       def changelog_content(lines, heading_version: nil)
@@ -1367,7 +1364,7 @@ module Gemstar
       end
 
       def strip_leading_version_heading(text, heading_version)
-        stripped = text.sub(/\A\s*#+\s*(?:Version\s+)?v?#{Regexp.escape(heading_version)}\b[^\n]*\n+/i, "")
+        stripped = text.sub(/\A\s*#+\s*[\[(]?(?:Version\s+)?v?#{Regexp.escape(heading_version)}\b[^\n]*\n+/i, "")
         return strip_leading_heading_separator(stripped) unless stripped == text
 
         lines = text.lines
@@ -1559,7 +1556,7 @@ module Gemstar
       end
 
       def previous_section_version(versions, current_version)
-        ordered_versions = versions.sort_by { |version| -sortable_version_number(version) }
+        ordered_versions = versions.sort { |left, right| compare_versions(right, left) }
         current_index = ordered_versions.index(current_version)
         return nil if current_index.nil?
 

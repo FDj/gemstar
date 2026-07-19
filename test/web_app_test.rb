@@ -138,6 +138,20 @@ class WebAppTest < Minitest::Test
     assert_nil environment["GEM_HOME"]
   end
 
+  def test_changelog_sections_sort_selenium_versions_semantically
+    app = Gemstar::Web::App.allocate
+    sections = [
+      { kind: :previous, version: "3.141.5926" },
+      { kind: :previous, version: "4.46.0" },
+      { kind: :previous, version: "3.142.7" }
+    ]
+
+    sorted = app.send(:sort_change_sections, sections)
+
+    assert_equal %w[4.46.0 3.142.7 3.141.5926], sorted.map { |section| section[:version] }
+    assert_equal "3.142.7", app.send(:previous_section_version, sections.map { |section| section[:version] }, "4.46.0")
+  end
+
   def test_revision_panel_labels_previous_versions_as_included_for_unchanged_worktree_package
     app = Gemstar::Web::App.allocate
     app.instance_variable_set(:@selected_to_revision_id, "worktree")
@@ -216,6 +230,20 @@ class WebAppTest < Minitest::Test
     refute_includes content[:html], "Version 4.0.2"
     assert_includes content[:html], "Merged changes in 3.2.4 and 3.3.3."
     assert_equal "4.0.2", content[:title]
+  end
+
+  def test_changelog_content_strips_linked_version_heading
+    app = Gemstar::Web::App.allocate
+
+    content = app.send(
+      :changelog_content,
+      ["## [0.1.3] - 2026-07-14\n\n### Fixed\n\n- Package configured license files."],
+      heading_version: "0.1.3"
+    )
+
+    assert_equal "0.1.3", content[:title]
+    refute_includes content[:html], "[0.1.3]"
+    assert_includes content[:html], "Package configured license files"
   end
 
   def test_detail_refresh_requested_accepts_truthy_flag

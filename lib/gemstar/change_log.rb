@@ -13,7 +13,7 @@ module Gemstar
     @@candidates_found = Hash.new(0)
     GITHUB_CLI_TIMEOUT = 8
     DEFAULT_CHANGELOG_PATHS = %w[
-      CHANGELOG.md releases.md CHANGES.md
+      CHANGELOG.md CHANGELOG releases.md CHANGES.md
       Changelog.md changelog.md ChangeLog.md
       Changes.md changes.md
       HISTORY.md History.md history.md
@@ -43,7 +43,7 @@ module Gemstar
       return @sections if !cache_only && defined?(@sections) && !force_refresh
 
       metadata_key = @metadata.respond_to?(:cache_key) ? @metadata.cache_key : @metadata.gem_name
-      cache_key = "sections-v6-#{metadata_key}"
+      cache_key = "sections-v8-#{metadata_key}"
       serialized = if cache_only
         Cache.peek(cache_key)
       else
@@ -193,24 +193,6 @@ module Gemstar
       value
     end
 
-    # Extract a version token from a heading line, preferring explicit version forms
-    # and avoiding returning a date string when both are present.
-    def extract_version_from_heading(line)
-      return nil unless line
-      heading = line.to_s
-      version_token = /(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)/
-      # 1) Prefer version inside parentheses after a date: "### 2025-11-07 (2.16.0)"
-      #    Ensure we ONLY treat it as a version if it actually looks like a version (has a dot),
-      #    so we don't capture dates like (2025-11-21).
-      return $1 if heading[/\(\s*v?#{version_token}(?![A-Za-z0-9])\s*\)/]
-      # 2) Version-first with optional leading markers/labels: "## v1.2.6 - 2025-10-21"
-      #    Require a dot in the numeric token to avoid capturing dates like 2025-11-21.
-      return $1 if heading[/^\s*(?:[-*]\s+)?(?:#+|=+)?\s*(?:Version\s+)?\[*v?#{version_token}(?![A-Za-z0-9])\]*/i]
-      # 3) Anywhere: first semver-like token with a dot
-      return $1 if heading[/\bv?#{version_token}(?![A-Za-z0-9])\b/]
-      nil
-    end
-
     def extract_release_date_from_heading(line)
       return nil unless line
 
@@ -219,29 +201,42 @@ module Gemstar
     end
 
     def changelog_uri_candidates(cache_only: false, force_refresh: false)
-      candidates = []
-
       repo_uri = @metadata.repo_uri(cache_only: cache_only, force_refresh: force_refresh)
       return [] if repo_uri.nil? || repo_uri.empty?
 
       meta = @metadata.meta(cache_only: cache_only, force_refresh: force_refresh)
-      candidates += changelog_uri_markdown_candidates(meta["changelog_uri"]) if meta
+      explicit_candidates = meta ? changelog_uri_markdown_candidates(meta["changelog_uri"]) : []
 
       changelog_source = metadata_changelog_source(repo_uri, cache_only: cache_only, force_refresh: force_refresh)
       return [] unless changelog_source
 
-      candidates += changelog_source[:paths].product(changelog_source[:branches]).map do |file, branch|
+      repository_candidates = changelog_source[:paths].product(changelog_source[:branches]).map do |file, branch|
         [changelog_source[:base], branch, file].reject { |segment| segment.to_s.empty? }.join("/")
       end
 
-      # Add the gem's changelog_uri last as it's usually not the most parsable:
-      candidates += [Gemstar::GitHub::github_blob_to_raw(meta["changelog_uri"])] if meta
+      candidates = if version_pinned_changelog_uri?(meta)
+        repository_candidates + explicit_candidates
+      else
+        explicit_candidates + repository_candidates
+      end
 
       candidates.flatten!
       candidates.uniq!
       candidates.compact!
 
       candidates
+    end
+
+    def version_pinned_changelog_uri?(meta)
+      changelog_uri = meta&.fetch("changelog_uri", nil).to_s
+      version = meta&.fetch("version", nil).to_s.sub(/\Av/i, "")
+      return false if changelog_uri.empty? || version.empty?
+
+      raw_uri = Gemstar::GitHub::github_blob_to_raw(changelog_uri)
+      path_segments = URI(raw_uri).path.split("/")
+      path_segments.include?(version) || path_segments.include?("v#{version}")
+    rescue URI::InvalidURIError
+      false
     end
 
     def changelog_uri_markdown_candidates(changelog_uri)
@@ -260,6 +255,7 @@ module Gemstar
           uri.path = "#{path.chomp("/")}.rst"
           candidates << uri.to_s
         elsif File.extname(path).empty?
+          candidates << raw_uri if uri.host == "raw.githubusercontent.com"
           uri.path = "#{path}.md"
           candidates << uri.to_s
           uri.path = "#{path}.rst"
@@ -313,12 +309,12 @@ module Gemstar
     end
 
     VERSION_PATTERNS = [
-      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*\d{4}-\d{2}-\d{2}\s*\(\s*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\s*\)/, # prefer this
-      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*\[*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\]*\s*(?:—|–|-)\s*\d{4}-\d{2}-\d{2}\b/,
-      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*(?:Version\s+)?(?:(?:[^\s\d][^\s]*\s+)+)\[*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\]*(?:\s*[-(].*)?/i,
-      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*(?:Version\s+)?\[*v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])\]*(?:\s*[-(].*)?/i,
-      /^\s*(?:[-+*]\s+)?Starting with version\s+v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])/i,
-      /^\s*(?:[-*]\s+)?(?:Version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9])(?:\s*[-(].*)?/i
+      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*\d{4}-\d{2}-\d{2}\s*\(\s*v?(\d+(?:\.\d+)+(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9]|\s*%)\s*\)/, # prefer this
+      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*\[*v?(\d+(?:\.\d+)+(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9]|\s*%)\]*\s*(?:—|–|-)\s*\d{4}-\d{2}-\d{2}\b/,
+      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*(?:Version\s+)?(?:(?:[^\s\d][^\s]*\s+)+)\[*v?(\d+(?:\.\d+)+(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9]|\s*%)\]*(?:\s*[-(].*)?/i,
+      /^\s*(?:[-*]\s+)?(?:#+|=+)\s*(?:Version\s+)?\[*v?(\d+(?:\.\d+)+(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9]|\s*%)\]*(?:\s*[-(].*)?/i,
+      /^\s*(?:[-+*]\s+)?Starting with version\s+v?(\d+(?:\.\d+)+(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9]|\s*%)/i,
+      /^\s*(?:[-+*]\s+)?(?:Version\s+)?v?(\d+(?:\.\d+)+(?:[-.][A-Za-z0-9]+)*)(?![A-Za-z0-9]|\s*%)(?:\s*[-(].*)?\s*$/i
     ]
     RST_ADORNMENT_PATTERN = /^\s*[=\-~`^"']{3,}\s*$/
 
@@ -356,7 +352,7 @@ module Gemstar
         m = VERSION_PATTERNS.lazy.map { |re| line.match(re) }.find(&:itself)
 
         if m
-          new_key = extract_version_from_heading(line) || $1
+          new_key = corrected_changelog_version(m[1], line)
 
           if current_key
             sections[current_key] ||= []
@@ -391,12 +387,19 @@ module Gemstar
 
       c.lines.each_with_object({}) do |line, dates|
         line = line.gsub(/^=+/) { |m| "#" * m.length }
-        next unless VERSION_PATTERNS.any? { |re| line.match?(re) }
+        match = VERSION_PATTERNS.lazy.map { |pattern| line.match(pattern) }.find(&:itself)
+        next unless match
 
-        version = extract_version_from_heading(line)
+        version = corrected_changelog_version(match[1], line)
         date = extract_release_date_from_heading(line)
         dates[version] ||= date if version && date
       end
+    end
+
+    def corrected_changelog_version(version, heading)
+      return version unless @metadata.respond_to?(:correct_changelog_version)
+
+      @metadata.correct_changelog_version(version, heading: heading) || version
     end
 
     def parse_github_release_sections(cache_only: false, force_refresh: false)

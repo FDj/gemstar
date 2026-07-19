@@ -97,6 +97,12 @@ module Gemstar
       end
     end
 
+    def correct_changelog_version(version, heading:)
+      overrides = package_metadata.dig("changelog", "version_overrides") || {}
+      release_date = heading.to_s[/\b\d{4}-\d{2}-\d{2}\b/]
+      overrides.fetch([version, release_date].compact.join("@"), version)
+    end
+
     def registry_release_dates(cache_only: false, force_refresh: false)
       cache_key = "rubygems-versions-#{gem_name}"
       json = if cache_only
@@ -145,7 +151,11 @@ module Gemstar
         override_branches = Array(override["branches"]).compact
         override_branches = [""] if override_branches.empty? && override["raw_base"]
         return {
-          base: expand_metadata_template(override["raw_base"] || github_raw_base(repo_uri)),
+          base: expand_metadata_template(
+            override["raw_base"] || github_raw_base(repo_uri),
+            cache_only: cache_only,
+            force_refresh: force_refresh
+          ),
           paths: override_paths.empty? ? Gemstar::ChangeLog::DEFAULT_CHANGELOG_PATHS : override_paths,
           branches: override_branches.empty? ? RemoteRepository.new(github_raw_base(repo_uri)).find_main_branch(cache_only: cache_only, force_refresh: force_refresh) : override_branches
         }
@@ -171,8 +181,9 @@ module Gemstar
       repo_uri.sub("https://github.com", "https://raw.githubusercontent.com").chomp("/")
     end
 
-    def expand_metadata_template(value)
-      value.to_s.gsub("{gem_name}", gem_name)
+    def expand_metadata_template(value, cache_only: false, force_refresh: false)
+      version = meta(cache_only: cache_only, force_refresh: force_refresh)&.dig("version").to_s
+      value.to_s.gsub("{gem_name}", gem_name).gsub("{version}", version)
     end
 
     def format_registry_release_date(datetime)

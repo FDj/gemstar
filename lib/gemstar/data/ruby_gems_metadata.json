@@ -5,5 +5,15 @@
       "paths": ["CHANGELOG.md"],
       "branches": [""]
     }
+  },
+  "thruster": {
+    "changelog": {
+      "raw_base": "https://raw.githubusercontent.com/basecamp/thruster/v{version}",
+      "paths": ["CHANGELOG.md"],
+      "branches": [""],
+      "version_overrides": {
+        "0.1.22@2026-07-16": "0.1.23"
+      }
+    }
   }
 }
