@@ -232,6 +232,56 @@ class DiffCommandTest < Minitest::Test
     end
   end
 
+  def test_project_diff_filters_to_cargo_crates
+    project = FakeProject.new(
+      directory: @tmpdir,
+      name: "rust-app",
+      package_states: [
+        {
+          name: "serde",
+          metadata_package_name: "serde",
+          package_scope: "cargo",
+          package_type_label: "Crate",
+          old_version: "1.0.227",
+          new_version: "1.0.228",
+          version_label: "1.0.227 → 1.0.228",
+          package_source_file: :cargo_lock,
+          status: :upgrade
+        },
+        {
+          name: "rails",
+          package_scope: "gems",
+          package_type_label: "Gem",
+          old_version: "7.1.0",
+          new_version: "7.1.1",
+          version_label: "7.1.0 → 7.1.1",
+          status: :upgrade
+        }
+      ]
+    )
+
+    Gemstar::Project.stub :from_cli_argument, project do
+      diff = Gemstar::Commands::Diff.new(project: @tmpdir, ecosystem: "cargo")
+      diff.stub :output_renderer, FakeRenderer.new do
+        built = []
+        diff.stub :build_entry, ->(package_state:) {
+          built << package_state[:name]
+          {
+            old: package_state[:old_version],
+            new: package_state[:new_version],
+            version_label: package_state[:version_label],
+            package_scope: package_state[:package_scope]
+          }
+        } do
+          diff.run
+        end
+
+        assert_equal ["serde"], built
+        assert_equal ["serde"], diff.updates.keys
+      end
+    end
+  end
+
   def test_project_diff_resolves_since_to_from_revision
     project = FakeProject.new(
       directory: @tmpdir,

@@ -29,7 +29,7 @@ class ServerCommandTest < Minitest::Test
 
     assert_empty stdout
     assert_includes stderr, "Directory #{@tmpdir} does not contain a recognized project file."
-    assert_includes stderr, "Only Gemfile, Gemfile.lock, config/importmap.rb, package.json, package-lock.json, and uv.lock are supported."
+    assert_includes stderr, "Only Gemfile, Gemfile.lock, config/importmap.rb, package.json, package-lock.json, uv.lock, Cargo.toml, and Cargo.lock are supported."
     refute_includes stderr, "from "
   end
 

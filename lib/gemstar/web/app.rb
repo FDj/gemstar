@@ -7,6 +7,7 @@ require "uri"
 require "kramdown"
 require "nokogiri"
 require "roda"
+require_relative "../crates_io_metadata"
 require_relative "../pypi_metadata"
 
 begin
@@ -18,7 +19,7 @@ module Gemstar
   module Web
     class App < Roda
       MISSING_METADATA = Object.new
-      CACHE_VERSION = "v10"
+      CACHE_VERSION = "v11"
 
       class << self
         def build(projects:, config_home:, cache_warmer: nil)
@@ -125,6 +126,7 @@ module Gemstar
         importmap_stamp = File.file?(project.importmap_path) ? File.mtime(project.importmap_path).to_i : 0
         importmap_vendor_stamp = importmap_vendor_mtime(project)
         package_lock_stamp = File.file?(project.package_lock_path) ? File.mtime(project.package_lock_path).to_i : 0
+        cargo_lock_stamp = File.file?(project.cargo_lock_path) ? File.mtime(project.cargo_lock_path).to_i : 0
 
         [
           CACHE_VERSION,
@@ -134,10 +136,12 @@ module Gemstar
           params["filter"],
           params["scope"],
           package_param(params),
+          params["package_id"],
           lockfile_stamp,
           importmap_stamp,
           importmap_vendor_stamp,
-          package_lock_stamp
+          package_lock_stamp,
+          cargo_lock_stamp
         ]
       end
 
@@ -177,10 +181,12 @@ module Gemstar
         @selected_to_revision_id = selected_to_revision_id(@selected_to_revision_id)
         @gem_states = @selected_project ? @selected_project.gem_states(from_revision_id: @selected_from_revision_id, to_revision_id: @selected_to_revision_id) : []
         requested_package_name = package_param(params)
+        requested_package_id = params["package_id"]
         @requested_gem_name = requested_package_name
-        @selected_package_scope = selected_package_scope(params["scope"], requested_package_name)
-        @selected_filter = selected_filter(params["filter"], requested_package_name)
-        @selected_gem = selected_gem_state(requested_package_name)
+        @requested_package_id = requested_package_id
+        @selected_package_scope = selected_package_scope(params["scope"], requested_package_name, requested_package_id)
+        @selected_filter = selected_filter(params["filter"], requested_package_name, requested_package_id)
+        @selected_gem = selected_gem_state(requested_package_name, requested_package_id)
       end
 
       def package_param(params)
@@ -222,34 +228,36 @@ module Gemstar
         valid_ids.include?(candidate) ? candidate : valid_ids.first || "worktree"
       end
 
-      def selected_filter(raw_filter, raw_gem_name)
+      def selected_filter(raw_filter, raw_gem_name, raw_package_id = nil)
         return "all" if @gem_states.empty?
         return "all" unless @gem_states.any? { |gem| gem[:status] != :unchanged }
         return raw_filter if %w[updated all].include?(raw_filter)
 
-        selected_gem = @gem_states.find { |gem| gem[:name] == raw_gem_name }
+        selected_gem = requested_gem_state(raw_gem_name, raw_package_id)
         return "all" if selected_gem && selected_gem[:status] == :unchanged
 
         @gem_states.any? { |gem| gem[:status] != :unchanged } ? "updated" : "all"
       end
 
-      def selected_package_scope(raw_scope, raw_gem_name)
+      def selected_package_scope(raw_scope, raw_gem_name, raw_package_id = nil)
         return "all" if @gem_states.empty?
 
         available_scopes = available_package_scopes
         default_scope = available_scopes == ["gems"] ? "gems" : "all"
         return raw_scope if raw_scope == "all" || available_scopes.include?(raw_scope)
 
-        selected_gem = @gem_states.find { |gem| gem[:name] == raw_gem_name }
+        selected_gem = requested_gem_state(raw_gem_name, raw_package_id)
         return selected_gem[:package_scope] if selected_gem
 
         default_scope
       end
 
-      def selected_gem_state(raw_gem_name)
+      def selected_gem_state(raw_gem_name, raw_package_id = nil)
         return nil if @gem_states.empty?
 
-        exact_match = @gem_states.find { |gem| gem[:name] == raw_gem_name && gem_visible_in_selected_scope?(gem) }
+        exact_match = @gem_states.find { |gem| package_identity(gem) == raw_package_id && gem_visible_in_selected_scope?(gem) } unless raw_package_id.to_s.empty?
+        exact_match ||= @gem_states.find { |gem| package_identity(gem) == raw_package_id } unless raw_package_id.to_s.empty?
+        exact_match ||= @gem_states.find { |gem| gem[:name] == raw_gem_name && gem_visible_in_selected_scope?(gem) }
         exact_match ||= @gem_states.find { |gem| gem[:name] == raw_gem_name }
         return exact_match if exact_match
 
@@ -257,6 +265,23 @@ module Gemstar
           @gem_states.find { |gem| gem_visible_in_selected_filter?(gem) } ||
           @gem_states.find { |gem| gem[:status] != :unchanged } ||
           @gem_states.first
+      end
+
+      def requested_gem_state(raw_gem_name, raw_package_id)
+        unless raw_package_id.to_s.empty?
+          identity_match = @gem_states.find { |gem| package_identity(gem) == raw_package_id }
+          return identity_match if identity_match
+        end
+
+        @gem_states.find { |gem| gem[:name] == raw_gem_name }
+      end
+
+      def package_identity(gem_state)
+        [
+          gem_state[:package_scope],
+          gem_state[:package_source_file],
+          gem_state[:package_lock_key] || gem_state[:name]
+        ].join(":")
       end
 
       def gem_visible_in_selected_filter?(gem_state)
@@ -480,6 +505,21 @@ module Gemstar
           }
         end
 
+
+        if project.cargo_toml? || project.cargo_lock?
+          actions << {
+            id: "cargo_fetch",
+            label: "cargo fetch",
+            command: %w[cargo fetch]
+          }
+          actions << {
+            id: "cargo_update",
+            label: "cargo update",
+            command: %w[cargo update],
+            primary: true
+          }
+        end
+
         if project.package_lock?
           actions << {
             id: "npm_install",
@@ -678,19 +718,22 @@ module Gemstar
         HTML
 
         items = @gem_states.map do |gem|
-          selected = gem[:name] == @selected_gem[:name] ? " is-selected" : ""
+          identity = package_identity(gem)
+          selected = identity == package_identity(@selected_gem) ? " is-selected" : ""
           status_class = " status-#{gem[:status]}"
           updated = gem[:status] != :unchanged
-          hidden = (!gem_visible_in_selected_scope?(gem) || (@selected_filter == "updated" && !updated && gem[:name] != @requested_gem_name)) ? ' hidden="hidden"' : ""
+          requested = identity == @requested_package_id || (@requested_package_id.to_s.empty? && gem[:name] == @requested_gem_name)
+          hidden = (!gem_visible_in_selected_scope?(gem) || (@selected_filter == "updated" && !updated && !requested)) ? ' hidden="hidden"' : ""
           <<~HTML
             <a
               class="gem-row#{selected}#{status_class}"
-              href="#{project_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, package: gem[:name])}"
+              href="#{project_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, package: gem[:name], package_id: identity)}"
               data-gem-link="true"
               data-gem-name="#{h(gem[:name])}"
+              data-package-id="#{h(identity)}"
               data-gem-updated="#{updated}"
               data-package-scope="#{h(gem[:package_scope])}"
-              data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, package: gem[:name]))}"
+              data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, package: gem[:name], package_id: identity))}"
               #{hidden}
             >
               <span class="gem-name-row">
@@ -743,7 +786,7 @@ module Gemstar
         detail_pending = detail_pending?(@selected_gem[:name], metadata, groups)
 
         detail_html = <<~HTML
-          <section class="detail" data-detail-panel tabindex="0" data-detail-pending="#{detail_pending}" data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, package: @selected_gem[:name]))}">
+          <section class="detail" data-detail-panel tabindex="0" data-detail-pending="#{detail_pending}" data-detail-url="#{h(detail_query(project: @selected_project_index, from: @selected_from_revision_id, to: @selected_to_revision_id, filter: @selected_filter, scope: @selected_package_scope, package: @selected_gem[:name], package_id: package_identity(@selected_gem)))}">
             #{render_detail_hero(metadata)}
             #{render_selected_dependency_details}
             #{render_detail_loading_notice if detail_pending}
@@ -764,7 +807,8 @@ module Gemstar
           to: @selected_to_revision_id,
           filter: @selected_filter,
           scope: @selected_package_scope,
-          package: @selected_gem[:name]
+          package: @selected_gem[:name],
+          package_id: package_identity(@selected_gem)
         )
 
         <<~HTML
@@ -805,13 +849,39 @@ module Gemstar
             <div class="detail-hero-copy">
               <div class="detail-title-row">
                 <div class="detail-title-lockup">
-                  <h2>#{title_markup}#{bundled_version ? %(<span class="detail-title-version"> #{h(bundled_version)}</span>) : ""}</h2>
+                  <div class="detail-heading">
+                    <h2>#{title_markup}#{bundled_version ? %(<span class="detail-title-version"> #{h(bundled_version)}</span>) : ""}</h2>
+                    #{render_package_type_badge(@selected_gem)}
+                  </div>
                 </div>
                 #{render_detail_links(metadata)}
               </div>
               <div class="detail-subtitle">#{render_detail_subtitle(description)}</div>
             </div>
           </section>
+        HTML
+      end
+
+      def render_package_type_badge(package_state)
+        scope = package_state[:package_scope].to_s
+        label, accessible_label, icon_type = case scope
+        when "gems"
+          ["Gem", "Ruby gem", :rubygems]
+        when "cargo"
+          ["Crate", "Rust crate", :cargo]
+        when "js"
+          ["JS", "JavaScript package", :javascript]
+        when "python"
+          ["Python", "Python package", :python]
+        else
+          [package_state[:package_type_label] || "Package", "Package", :package]
+        end
+
+        <<~HTML.chomp
+          <span class="detail-package-type detail-package-type-#{h(scope)}" aria-label="#{h(accessible_label)}" title="#{h(accessible_label)}">
+            <span class="detail-package-type-icon" aria-hidden="true">#{icon_svg(icon_type)}</span>
+            <span>#{h(label)}</span>
+          </span>
         HTML
       end
 
@@ -939,6 +1009,7 @@ module Gemstar
           @selected_gem[:name],
           package_scope: @selected_gem[:package_scope],
           source_file: @selected_gem[:package_source_file],
+          package_key: @selected_gem[:package_lock_key],
           revision_id: revision_id
         )
       end
@@ -1005,6 +1076,16 @@ module Gemstar
             ["PyPI (#{h(registry_url)})"]
           else
             ["PyPI (#{h(remote)})"]
+          end
+        when :cargo
+          remote = source[:remote]
+          registry_url = source[:registry_url]
+          if remote.to_s.empty? && registry_url.to_s.empty?
+            ["Cargo registry"]
+          elsif remote.to_s.empty?
+            ["Cargo registry (#{h(registry_url)})"]
+          else
+            ["Cargo registry (#{h(remote)})"]
           end
         else
           []
@@ -1443,6 +1524,21 @@ module Gemstar
           }
         end
 
+        if package_state[:package_scope] == "cargo"
+          package_name = package_state[:metadata_package_name].to_s
+          package_name = source[:package_name].to_s if package_name.empty?
+          package_name = package_state[:name].to_s if package_name.empty?
+          package_version = (package_state[:new_version] || package_state[:old_version]).to_s if package_version.empty?
+          registry_url = "https://crates.io/crates/#{package_name}" if registry_url.empty? && !package_name.empty?
+
+          return {
+            "info" => "Rust crate `#{package_name}` locked to `#{package_version}` in Cargo.lock",
+            "project_uri" => registry_url.empty? ? nil : registry_url,
+            "homepage_uri" => absolute_url?(remote) ? remote : nil,
+            "source_code_uri" => repo_url.empty? ? nil : repo_url
+          }
+        end
+
         package_name = package_state[:name].to_s if package_name.empty? && source[:type] == :npm
         package_version = (package_state[:new_version] || package_state[:old_version]).to_s if package_version.empty? && source[:type] == :npm
         registry_url = "https://www.npmjs.com/package/#{package_name}" if registry_url.empty? && !package_name.empty?
@@ -1491,6 +1587,10 @@ module Gemstar
       def metadata_adapter_for(package_state)
         return Gemstar::RubyGemsMetadata.new(package_state[:name]) if package_state[:package_scope] == "gems"
         return Gemstar::PyPIMetadata.new(package_state[:name]) if package_state[:package_scope] == "python"
+        if package_state[:package_scope] == "cargo"
+          package_name = package_state[:metadata_package_name] || package_state.dig(:source, :package_name) || package_state[:name]
+          return Gemstar::CratesIOMetadata.new(package_name)
+        end
         return nil unless package_state[:package_scope] == "js"
 
         provider_gem = package_state.dig(:source, :provider_gem)
@@ -1525,7 +1625,15 @@ module Gemstar
         when :home
           '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 .8 1.2 6.3v8.9h4.3V10h5v5.2h4.3V6.3L8 .8Zm5.2 13.3h-1.8V8.9H4.6v5.2H2.8V6.8L8 2.6l5.2 4.2v7.3Z"/></svg>'
         when :rubygems
-          '<svg viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="2.6" fill="#fff"/><path fill="#111" d="m8 2.35 4.55 2.63v5.24L8 12.85l-4.55-2.63V4.98L8 2.35Zm0 1.3L4.58 5.62v3.96L8 11.55l3.42-1.97V5.62L8 3.65Zm0 1.07 2.5 1.44v2.88L8 10.48 5.5 9.04V6.16L8 4.72Z"/></svg>'
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="#cc342d" d="M4.2 2.2h7.6l2.7 4.1L8 14.2 1.5 6.3l2.7-4.1Z"/><path fill="#ef5b55" d="m4.2 2.2 1.5 4.1H1.5l2.7-4.1Zm7.6 0 2.7 4.1h-4.2l1.5-4.1Z"/><path fill="#a91f1a" d="M5.7 6.3h4.6L8 14.2 5.7 6.3Z"/><path fill="#fff" fill-opacity=".42" d="m5 3.15.7 2H3.3l1.3-2h.4Z"/></svg>'
+        when :cargo
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" d="m2.2 5 5.8-3 5.8 3v6L8 14l-5.8-3V5Z"/><path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" d="M2.4 5 8 8l5.6-3M8 8v6M5.2 3.45 11 6.5"/></svg>'
+        when :javascript
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/><text x="8" y="10.8" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="6.3" font-weight="700" fill="currentColor">JS</text></svg>'
+        when :python
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" d="M8 1.8H5.6c-1.7 0-2.4.8-2.4 2.3v2.1h5.6v1.6H4.5C2.8 7.8 2 8.7 2 10.2c0 1.7 1 2.5 2.6 2.5H7"/><path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" d="M8 14.2h2.4c1.7 0 2.4-.8 2.4-2.3V9.8H7.2V8.2h4.3c1.7 0 2.5-.9 2.5-2.4 0-1.7-1-2.5-2.6-2.5H9"/><circle cx="6" cy="4.2" r=".7" fill="currentColor"/><circle cx="10" cy="11.8" r=".7" fill="currentColor"/></svg>'
+        when :package
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" d="m2.2 5 5.8-3 5.8 3v6L8 14l-5.8-3V5ZM2.4 5 8 8l5.6-3M8 8v6"/></svg>'
         when :info
           '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="4.5" r="0.9" fill="currentColor"/><path d="M8 7v4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>'
         else
@@ -1677,18 +1785,19 @@ module Gemstar
         html
       end
 
-      def detail_query(project:, from:, to:, filter:, scope:, package:)
-        "/detail?#{URI.encode_www_form(project: project, from: from, to: to, filter: filter, scope: scope, package: package)}"
+      def detail_query(project:, from:, to:, filter:, scope:, package:, package_id: nil)
+        "/detail?#{URI.encode_www_form({project: project, from: from, to: to, filter: filter, scope: scope, package: package, package_id: package_id}.compact)}"
       end
 
-      def project_query(project:, from:, to:, filter:, scope:, package:)
+      def project_query(project:, from:, to:, filter:, scope:, package:, package_id: nil)
         params = {
           project: project,
           from: from,
           to: to,
           filter: filter,
           scope: scope,
-          package: package
+          package: package,
+          package_id: package_id
         }.compact
 
         "/?#{URI.encode_www_form(params)}"

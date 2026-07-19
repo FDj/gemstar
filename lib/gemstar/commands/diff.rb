@@ -2,6 +2,7 @@
 
 require_relative "command"
 require_relative "../pypi_metadata"
+require_relative "../crates_io_metadata"
 require "concurrent-ruby"
 require "tmpdir"
 require "pathname"
@@ -71,9 +72,9 @@ module Gemstar
       def normalize_ecosystem(value)
         normalized = value.to_s.strip.downcase
         return "all" if normalized.empty?
-        return normalized if %w[all gems js python].include?(normalized)
+        return normalized if %w[all gems js python cargo].include?(normalized)
 
-        raise Thor::Error, "Unsupported ecosystem #{value.inspect}. Expected one of: all, gems, js, python"
+        raise Thor::Error, "Unsupported ecosystem #{value.inspect}. Expected one of: all, gems, js, python, cargo"
       end
 
       def normalize_since(value)
@@ -213,6 +214,9 @@ module Gemstar
           Gemstar::NpmMetadata.new(package_state[:name])
         elsif package_state[:package_scope] == "python"
           Gemstar::PyPIMetadata.new(package_state[:name])
+        elsif package_state[:package_scope] == "cargo"
+          package_name = package_state[:metadata_package_name] || package_state.dig(:source, :package_name) || package_state[:name]
+          Gemstar::CratesIOMetadata.new(package_name)
         else
           Gemstar::RubyGemsMetadata.new(package_state[:name])
         end
@@ -320,6 +324,8 @@ module Gemstar
             "package-lock"
           when :uv_lock
             "uv.lock"
+          when :cargo_lock
+            "Cargo.lock"
           else
             package_state[:package_scope]
           end

@@ -3,7 +3,7 @@
 [![JRuby Build](https://github.com/FDj/gemstar/workflows/JRuby%20Build/badge.svg)](https://github.com/FDj/gemstar/actions)
 
 # Gemstar
-Helps you keep track of your Ruby gems, JavaScript packages, and Python packages.
+Helps you keep track of your Ruby gems, JavaScript packages, Python packages, and Rust crates.
 
 ## Installation
 
@@ -72,7 +72,7 @@ To examine a specific Gemfile.lock, pass it like this:
 gemstar diff --lockfile=~/MyProject/Gemfile.lock
 ```
 
-To diff a project from anywhere, pass the project directory or a supported project file. In project mode, gemstar includes Ruby gems, JS packages from `importmap.rb` and `package-lock.json`, and Python packages from `uv.lock` when present:
+To diff a project from anywhere, pass the project directory or a supported project file. In project mode, gemstar includes Ruby gems, JS packages from `importmap.rb` and `package-lock.json`, Python packages from `uv.lock`, and Rust crates from `Cargo.lock` when present:
 
 ```shell
 gemstar diff --project ~/Code/my-app
@@ -84,6 +84,7 @@ To filter a project diff down to one ecosystem:
 gemstar diff --project ~/Code/my-app --ecosystem js
 gemstar diff --project ~/Code/my-app --ecosystem gems
 gemstar diff --project ~/Code/my-app --ecosystem python
+gemstar diff --project ~/Code/my-app --ecosystem cargo
 ```
 
 To write markdown instead of html:

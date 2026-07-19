@@ -35,12 +35,23 @@
     });
   };
   const packageNameParam = (url) => url.searchParams.get("package") || url.searchParams.get("gem");
+  const packageIdParam = (url) => url.searchParams.get("package_id");
   const requestedGemName = () => packageNameParam(new URL(window.location.href));
+  const requestedPackageId = () => packageIdParam(new URL(window.location.href));
   const currentDetailGemName = () => {
     if (!detailPanel || !detailPanel.dataset.detailUrl) return null;
 
     try {
       return packageNameParam(new URL(detailPanel.dataset.detailUrl, window.location.origin));
+    } catch (_error) {
+      return null;
+    }
+  };
+  const currentDetailPackageId = () => {
+    if (!detailPanel || !detailPanel.dataset.detailUrl) return null;
+
+    try {
+      return packageIdParam(new URL(detailPanel.dataset.detailUrl, window.location.origin));
     } catch (_error) {
       return null;
     }
@@ -150,6 +161,7 @@
   const applyGemFilter = (filter) => {
     currentFilter = filter;
     const pinnedGemName = requestedGemName();
+    const pinnedPackageId = requestedPackageId();
     const searchTerm = currentSearch.trim().toLowerCase();
 
     filterButtons.forEach((button) => {
@@ -162,7 +174,7 @@
 
     gemLinks.forEach((link) => {
       const updated = link.dataset.gemUpdated === "true";
-      const pinned = pinnedGemName && link.dataset.gemName === pinnedGemName;
+      const pinned = pinnedPackageId ? link.dataset.packageId === pinnedPackageId : pinnedGemName && link.dataset.gemName === pinnedGemName;
       const matchesScope = currentPackageScope === "all" || link.dataset.packageScope === currentPackageScope;
       const matchesSearch = searchTerm === "" || link.dataset.gemName.toLowerCase().includes(searchTerm);
       link.hidden = (!matchesScope || (filter === "updated" && !updated && !pinned) || !matchesSearch);
@@ -199,16 +211,18 @@
     }
   };
 
-  const syncSidebarSelection = (gemName = null, keepVisible = false) => {
+  const syncSidebarSelection = (packageId = null, gemName = null, keepVisible = false) => {
+    const effectivePackageId = packageId || requestedPackageId();
     const effectiveGemName = gemName || requestedGemName();
-    if (!effectiveGemName) {
+    if (!effectivePackageId && !effectiveGemName) {
       clearSidebarSelection();
       return;
     }
 
     let selectedLink = null;
     gemLinks.forEach((link) => {
-      const matches = link.dataset.gemName === effectiveGemName;
+      const identityMatches = effectivePackageId ? link.dataset.packageId === effectivePackageId : link.dataset.gemName === effectiveGemName;
+      const matches = !link.hidden && identityMatches;
       link.classList.toggle("is-selected", matches);
       if (matches) {
         selectedLink = link;
@@ -295,7 +309,7 @@
           window.history[historyMethod]({}, "", pageUrl);
         }
         const detailUrl = new URL(url, window.location.origin);
-        syncSidebarSelection(packageNameParam(detailUrl));
+        syncSidebarSelection(packageIdParam(detailUrl), packageNameParam(detailUrl));
       })
       .catch(() => {
         stopDetailLoading();
@@ -307,7 +321,7 @@
 
     stopDetailPoll();
     stopDetailLoading();
-    syncSidebarSelection(link.dataset.gemName, keepVisible);
+    syncSidebarSelection(link.dataset.packageId, link.dataset.gemName, keepVisible);
     fetchDetail(link.dataset.detailUrl || link.href, historyMode);
 
     focusSidebar();
@@ -315,13 +329,17 @@
 
   const ensureInitialGemSelection = () => {
     const requested = requestedGemName();
+    const requestedId = requestedPackageId();
 
     const detailGemName = currentDetailGemName();
-    const detailLink = detailGemName ? visibleGemLinks().find((link) => link.dataset.gemName === detailGemName) : null;
+    const detailPackageId = currentDetailPackageId();
+    const detailLink = detailPackageId ?
+      visibleGemLinks().find((link) => link.dataset.packageId === detailPackageId) :
+      (detailGemName ? visibleGemLinks().find((link) => link.dataset.gemName === detailGemName) : null);
 
     if (detailLink) {
-      syncSidebarSelection(detailGemName, true);
-      if (!requested) {
+      syncSidebarSelection(detailLink.dataset.packageId, detailLink.dataset.gemName, true);
+      if (!requested && !requestedId) {
         const pageUrl = new URL(window.location.href);
         const detailUrl = new URL(detailLink.dataset.detailUrl || detailLink.href, window.location.origin);
         pageUrl.search = detailUrl.search;
@@ -330,19 +348,19 @@
         window.history.replaceState({}, "", pageUrl);
       }
       if (detailNeedsInitialFetch()) {
-        fetchDetail(detailLink.dataset.detailUrl || detailLink.href, requested ? "none" : "replace", { refresh: pendingManualDetailRefresh });
+        fetchDetail(detailLink.dataset.detailUrl || detailLink.href, requested || requestedId ? "none" : "replace", { refresh: pendingManualDetailRefresh });
         pendingManualDetailRefresh = false;
       }
       return;
     }
 
-    if (requested) return;
+    if (requested || requestedId) return;
 
     const firstVisibleLink = visibleGemLinks()[0];
     if (firstVisibleLink) {
       const refresh = pendingManualDetailRefresh;
       pendingManualDetailRefresh = false;
-      syncSidebarSelection(firstVisibleLink.dataset.gemName, true);
+      syncSidebarSelection(firstVisibleLink.dataset.packageId, firstVisibleLink.dataset.gemName, true);
       fetchDetail(firstVisibleLink.dataset.detailUrl || firstVisibleLink.href, "replace", { refresh });
       focusSidebar();
     }
@@ -363,7 +381,7 @@
     scheduleDetailPoll();
   }
 
-  syncSidebarSelection(null, true);
+  syncSidebarSelection(null, null, true);
   applyGemFilter(currentFilter);
   ensureInitialGemSelection();
 
@@ -383,7 +401,7 @@
       const url = new URL(window.location.href);
       url.searchParams.set("filter", currentFilter);
       window.history.replaceState({}, "", url);
-      syncSidebarSelection(null, true);
+      syncSidebarSelection(null, null, true);
     });
   });
 
@@ -397,7 +415,7 @@
       const url = new URL(window.location.href);
       url.searchParams.set("scope", currentPackageScope);
       window.history.replaceState({}, "", url);
-      syncSidebarSelection(null, true);
+      syncSidebarSelection(null, null, true);
     });
   });
 
@@ -408,7 +426,7 @@
       if (sidebarPanel) {
         sidebarPanel.scrollTop = 0;
       }
-      syncSidebarSelection(null, true);
+      syncSidebarSelection(null, null, true);
     });
   }
 
@@ -490,19 +508,19 @@
         event.target.value = "<%= selected_project_index %>";
         return;
       }
-      navigate({ project: event.target.value, from: null, to: "worktree", filter: currentFilter, scope: currentPackageScope, package: null, gem: null });
+      navigate({ project: event.target.value, from: null, to: "worktree", filter: currentFilter, scope: currentPackageScope, package: null, package_id: null, gem: null });
     });
   }
 
   if (fromSelect) {
     fromSelect.addEventListener("change", (event) => {
-      navigate({ from: event.target.value, filter: currentFilter, scope: currentPackageScope, package: null, gem: null });
+      navigate({ from: event.target.value, filter: currentFilter, scope: currentPackageScope, package: null, package_id: null, gem: null });
     });
   }
 
   if (toSelect) {
     toSelect.addEventListener("change", (event) => {
-      navigate({ to: event.target.value, filter: currentFilter, scope: currentPackageScope, package: null, gem: null });
+      navigate({ to: event.target.value, filter: currentFilter, scope: currentPackageScope, package: null, package_id: null, gem: null });
     });
   }
 
@@ -560,7 +578,7 @@
     if (!links.length) return;
 
     const selectedGem = currentSelectedIndex();
-    const currentIndex = selectedGem >= 0 ? selectedGem : 0;
+    const currentIndex = selectedGem >= 0 ? selectedGem : (event.key === "ArrowUp" ? links.length : -1);
     let nextIndex = null;
 
     if (event.key === "ArrowDown") nextIndex = Math.min(currentIndex + 1, links.length - 1);

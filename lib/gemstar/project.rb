@@ -1,4 +1,5 @@
 require "time"
+require_relative "cargo_lock_file"
 require_relative "uv_lock_file"
 
 module Gemstar
@@ -10,7 +11,9 @@ module Gemstar
       "config/importmap.rb",
       "package.json",
       "package-lock.json",
-      "uv.lock"
+      "uv.lock",
+      "Cargo.toml",
+      "Cargo.lock"
     ].freeze
 
     class UnsupportedProjectError < ArgumentError
@@ -29,6 +32,8 @@ module Gemstar
     attr_reader :package_json_path
     attr_reader :package_lock_path
     attr_reader :uv_lock_path
+    attr_reader :cargo_toml_path
+    attr_reader :cargo_lock_path
     attr_reader :name
 
     def self.from_cli_argument(input)
@@ -39,7 +44,7 @@ module Gemstar
         basename = File.basename(expanded_input)
         directory =
           case basename
-          when "Gemfile", "Gemfile.lock", "package.json", "package-lock.json", "uv.lock"
+          when "Gemfile", "Gemfile.lock", "package.json", "package-lock.json", "uv.lock", "Cargo.toml", "Cargo.lock"
             File.dirname(expanded_input)
           when "importmap.rb"
             File.dirname(expanded_input, 2)
@@ -62,7 +67,9 @@ module Gemstar
         File.file?(File.join(directory, "config", "importmap.rb")) ||
         File.file?(File.join(directory, "package.json")) ||
         File.file?(File.join(directory, "package-lock.json")) ||
-        File.file?(File.join(directory, "uv.lock"))
+        File.file?(File.join(directory, "uv.lock")) ||
+        File.file?(File.join(directory, "Cargo.toml")) ||
+        File.file?(File.join(directory, "Cargo.lock"))
     end
 
     def self.supported_project_files_sentence
@@ -77,11 +84,14 @@ module Gemstar
       @package_json_path = File.join(@directory, "package.json")
       @package_lock_path = File.join(@directory, "package-lock.json")
       @uv_lock_path = File.join(@directory, "uv.lock")
+      @cargo_toml_path = File.join(@directory, "Cargo.toml")
+      @cargo_lock_path = File.join(@directory, "Cargo.lock")
       @name = File.basename(@directory)
       @lockfile_cache = {}
       @importmap_cache = {}
       @package_lock_cache = {}
       @uv_lock_cache = {}
+      @cargo_lock_cache = {}
       @gem_states_cache = {}
       @gem_added_on_cache = {}
       @history_cache = {}
@@ -143,15 +153,31 @@ module Gemstar
       @current_uv_lock ||= Gemstar::UvLockFile.new(path: uv_lock_path)
     end
 
+    def cargo_toml?
+      File.file?(cargo_toml_path)
+    end
+
+    def cargo_lock?
+      File.file?(cargo_lock_path)
+    end
+
+    def current_cargo_lock
+      return nil unless cargo_lock?
+
+      @current_cargo_lock ||= Gemstar::CargoLockFile.new(path: cargo_lock_path)
+    end
+
     def clear_cache!
       @current_lockfile = nil
       @current_importmap = nil
       @current_package_lock = nil
       @current_uv_lock = nil
+      @current_cargo_lock = nil
       @lockfile_cache.clear
       @importmap_cache.clear
       @package_lock_cache.clear
       @uv_lock_cache.clear
+      @cargo_lock_cache.clear
       @gem_states_cache.clear
       @gem_added_on_cache.clear
       @history_cache.clear
@@ -201,6 +227,7 @@ module Gemstar
       scopes << :gems if gemfile? || lockfile?
       scopes << :js if importmap? || package_lock? || package_json?
       scopes << :python if uv_lock?
+      scopes << :cargo if cargo_toml? || cargo_lock?
       scopes
     end
 
@@ -222,6 +249,7 @@ module Gemstar
       when [:gems] then "gem"
       when [:js] then "JavaScript package"
       when [:python] then "Python package"
+      when [:cargo] then "Rust crate"
       else "package"
       end
     end
@@ -284,6 +312,21 @@ module Gemstar
       return nil if content.nil? || content.empty?
 
       @uv_lock_cache[cache_key] = Gemstar::UvLockFile.new(content: content)
+    end
+
+    def cargo_lock_for_revision(revision_id)
+      cache_key = revision_id || "worktree"
+      return @cargo_lock_cache[cache_key] if @cargo_lock_cache.key?(cache_key)
+      return @cargo_lock_cache[cache_key] = current_cargo_lock if revision_id.nil? || revision_id == "worktree"
+      return nil unless cargo_lock?
+
+      relative_cargo_lock_path = git_repo.relative_path(cargo_lock_path)
+      return nil if relative_cargo_lock_path.nil?
+
+      content = git_repo.try_git_command(["show", "#{revision_id}:#{relative_cargo_lock_path}"])
+      return nil if content.nil? || content.empty?
+
+      @cargo_lock_cache[cache_key] = Gemstar::CargoLockFile.new(content: content)
     end
 
     def gem_states(from_revision_id: default_from_revision_id, to_revision_id: "worktree")
@@ -401,11 +444,42 @@ module Gemstar
         }
       end
 
-      @gem_states_cache[cache_key] = (gem_states + js_states + npm_states + python_states).sort_by { |gem| [gem[:name], gem[:package_scope], gem[:package_source_file].to_s] }
+      from_cargo_lock = cargo_lock_for_revision(from_revision_id)
+      to_cargo_lock = cargo_lock_for_revision(to_revision_id)
+      from_cargo_specs = from_cargo_lock&.specs || {}
+      to_cargo_specs = to_cargo_lock&.specs || {}
+      cargo_states = (from_cargo_specs.keys | to_cargo_specs.keys).map do |package_key|
+        old_version = from_cargo_specs[package_key]
+        new_version = to_cargo_specs[package_key]
+        effective_cargo_lock = new_version ? to_cargo_lock : from_cargo_lock
+        source = effective_cargo_lock&.source_for(package_key)
+        package_name = source&.dig(:package_name) || package_key
+        display_name = package_key == package_name ? package_name : "#{package_name} @ #{new_version || old_version}"
+
+        {
+          name: display_name,
+          metadata_package_name: package_name,
+          package_lock_key: package_key,
+          package_scope: "cargo",
+          package_type_label: "Crate",
+          package_source_file: :cargo_lock,
+          old_version: old_version,
+          new_version: new_version,
+          status: gem_status(old_version, new_version),
+          version_label: version_label(old_version, new_version),
+          platform: nil,
+          source: source,
+          bundle_origins: [],
+          bundle_origin_labels: []
+        }
+      end
+
+      @gem_states_cache[cache_key] = (gem_states + js_states + npm_states + python_states + cargo_states).sort_by { |gem| [gem[:name], gem[:package_scope], gem[:package_source_file].to_s] }
     end
 
-    def package_added_on(package_name, package_scope:, revision_id: "worktree", source_file: nil)
-      cache_key = [package_name, package_scope, source_file, revision_id]
+    def package_added_on(package_name, package_scope:, revision_id: "worktree", source_file: nil, package_key: nil)
+      lookup_name = package_key || package_name
+      cache_key = [lookup_name, package_scope, source_file, revision_id]
       return @gem_added_on_cache[cache_key] if @gem_added_on_cache.key?(cache_key)
 
       tracked_file, reader =
@@ -415,24 +489,28 @@ module Gemstar
           [package_lock_path, method(:package_lock_for_revision)]
         elsif source_file == :uv_lock
           [uv_lock_path, method(:uv_lock_for_revision)]
+        elsif source_file == :cargo_lock
+          [cargo_lock_path, method(:cargo_lock_for_revision)]
         elsif package_scope == "js"
           [importmap_path, method(:importmap_for_revision)]
         elsif package_scope == "python"
           [uv_lock_path, method(:uv_lock_for_revision)]
+        elsif package_scope == "cargo"
+          [cargo_lock_path, method(:cargo_lock_for_revision)]
         else
           [lockfile_path, method(:lockfile_for_revision)]
         end
       return @gem_added_on_cache[cache_key] = nil unless File.file?(tracked_file)
 
       target_snapshot = reader.call(revision_id)
-      return @gem_added_on_cache[cache_key] = nil unless target_snapshot&.specs&.key?(package_name)
+      return @gem_added_on_cache[cache_key] = nil unless target_snapshot&.specs&.key?(lookup_name)
 
       relative_path = git_repo.relative_path(tracked_file)
       return @gem_added_on_cache[cache_key] = nil if relative_path.nil?
 
       first_seen_revision = history_for_paths([relative_path], limit: nil, reverse: true).find do |revision|
         snapshot = reader.call(revision[:id])
-        snapshot&.specs&.key?(package_name)
+        snapshot&.specs&.key?(lookup_name)
       end
 
       return @gem_added_on_cache[cache_key] = worktree_added_on_info(tracked_file) if first_seen_revision.nil? && revision_id == "worktree"
@@ -454,16 +532,19 @@ module Gemstar
       current_importmap_specs = current_importmap&.specs || {}
       current_package_lock_specs = current_package_lock&.specs || {}
       current_uv_lock_specs = current_uv_lock&.specs || {}
+      current_cargo_lock_specs = current_cargo_lock&.specs || {}
 
       revision_history(limit: REVISION_HISTORY_LIMIT).find do |revision|
         revision_lockfile = lockfile_for_revision(revision[:id])
         revision_importmap = importmap_for_revision(revision[:id])
         revision_package_lock = package_lock_for_revision(revision[:id])
         revision_uv_lock = uv_lock_for_revision(revision[:id])
+        revision_cargo_lock = cargo_lock_for_revision(revision[:id])
         (revision_lockfile && revision_lockfile.specs != current_specs) ||
           (revision_importmap && revision_importmap.specs != current_importmap_specs) ||
           (revision_package_lock && revision_package_lock.specs != current_package_lock_specs) ||
-          (revision_uv_lock && revision_uv_lock.specs != current_uv_lock_specs)
+          (revision_uv_lock && revision_uv_lock.specs != current_uv_lock_specs) ||
+          (revision_cargo_lock && revision_cargo_lock.specs != current_cargo_lock_specs)
       end&.dig(:id)
     end
 
@@ -494,7 +575,7 @@ module Gemstar
     end
 
     def tracked_git_paths
-      [gemfile_path, lockfile_path, importmap_path, package_json_path, package_lock_path, uv_lock_path, *importmap_vendor_paths].filter_map do |path|
+      [gemfile_path, lockfile_path, importmap_path, package_json_path, package_lock_path, uv_lock_path, cargo_toml_path, cargo_lock_path, *importmap_vendor_paths].filter_map do |path|
         next unless File.file?(path)
 
         git_repo.relative_path(path)
@@ -641,6 +722,7 @@ module Gemstar
       when :gems then "gems"
       when :js then "js"
       when :python then "python"
+      when :cargo then "cargo"
       else scope.to_s
       end
     end
@@ -650,6 +732,7 @@ module Gemstar
       when :gems then "Gems"
       when :js then "JS"
       when :python then "Python"
+      when :cargo then "Cargo"
       else scope.to_s.capitalize
       end
     end

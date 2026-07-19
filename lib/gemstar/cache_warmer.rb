@@ -1,5 +1,6 @@
 require "set"
 require "thread"
+require_relative "crates_io_metadata"
 require_relative "pypi_metadata"
 
 module Gemstar
@@ -207,6 +208,11 @@ module Gemstar
     end
 
     def metadata_adapter_for(package_state)
+      if package_state[:package_scope] == "cargo"
+        package_name = package_state[:metadata_package_name] || package_state.dig(:source, :package_name) || package_state[:name]
+        return Gemstar::CratesIOMetadata.new(package_name)
+      end
+
       return Gemstar::PyPIMetadata.new(package_state[:name]) if package_state[:package_scope] == "python"
 
       if package_state[:package_scope] == "js"

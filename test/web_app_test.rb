@@ -28,6 +28,14 @@ class WebAppTest < Minitest::Test
       @scopes.include?(:python)
     end
 
+    def cargo_toml?
+      @scopes.include?(:cargo)
+    end
+
+    def cargo_lock?
+      @scopes.include?(:cargo)
+    end
+
     def package_lock?
       @scopes.include?(:package_lock)
     end
@@ -74,6 +82,78 @@ class WebAppTest < Minitest::Test
     assert_equal "updated", app.send(:selected_filter, "updated", nil)
   end
 
+  def test_package_identity_distinguishes_same_named_gem_and_crate
+    app = Gemstar::Web::App.allocate
+    cargo_state = {
+      name: "base64",
+      package_scope: "cargo",
+      package_source_file: :cargo_lock,
+      package_lock_key: "base64"
+    }
+    gem_state = {
+      name: "base64",
+      package_scope: "gems"
+    }
+
+    refute_equal app.send(:package_identity, cargo_state), app.send(:package_identity, gem_state)
+  end
+
+  def test_package_id_selects_only_one_same_named_package
+    app = Gemstar::Web::App.allocate
+    cargo_state = {
+      name: "base64",
+      package_scope: "cargo",
+      package_source_file: :cargo_lock,
+      package_lock_key: "base64",
+      package_type_label: "Crate",
+      version_label: "0.22.1",
+      status: :unchanged
+    }
+    gem_state = {
+      name: "base64",
+      package_scope: "gems",
+      package_type_label: "Gem",
+      version_label: "0.3.0",
+      status: :unchanged
+    }
+    app.instance_variable_set(:@gem_states, [cargo_state, gem_state])
+    app.instance_variable_set(:@selected_package_scope, "all")
+    app.instance_variable_set(:@selected_filter, "all")
+    app.instance_variable_set(:@selected_gem, gem_state)
+    app.instance_variable_set(:@selected_project_index, 0)
+    app.instance_variable_set(:@selected_from_revision_id, "HEAD")
+    app.instance_variable_set(:@selected_to_revision_id, "worktree")
+    app.instance_variable_set(:@requested_gem_name, "base64")
+    app.instance_variable_set(:@requested_package_id, app.send(:package_identity, gem_state))
+
+    selected = app.send(:selected_gem_state, "base64", app.send(:package_identity, gem_state))
+    html = app.send(:render_gem_list)
+
+    assert_same gem_state, selected
+    assert_equal 1, html.scan(" is-selected").length
+    assert_includes html, 'data-package-id="cargo:cargo_lock:base64"'
+    assert_includes html, 'data-package-id="gems::base64"'
+  end
+
+  def test_detail_header_badges_identify_each_package_ecosystem
+    app = Gemstar::Web::App.allocate
+
+    gem_badge = app.send(:render_package_type_badge, { package_scope: "gems", package_type_label: "Gem" })
+    cargo_badge = app.send(:render_package_type_badge, { package_scope: "cargo", package_type_label: "Crate" })
+    js_badge = app.send(:render_package_type_badge, { package_scope: "js", package_type_label: "JS" })
+    python_badge = app.send(:render_package_type_badge, { package_scope: "python", package_type_label: "Python" })
+
+    assert_includes gem_badge, 'aria-label="Ruby gem"'
+    assert_includes gem_badge, ">Gem</span>"
+    assert_includes gem_badge, 'fill="#cc342d"'
+    assert_includes cargo_badge, 'aria-label="Rust crate"'
+    assert_includes cargo_badge, ">Crate</span>"
+    assert_includes js_badge, 'aria-label="JavaScript package"'
+    assert_includes js_badge, ">JS</span>"
+    assert_includes python_badge, 'aria-label="Python package"'
+    assert_includes python_badge, ">Python</span>"
+  end
+
   def test_empty_detail_html_uses_project_package_label
     app = Gemstar::Web::App.allocate
     app.instance_variable_set(:@selected_project, FakeProject.new("Python package"))
@@ -96,13 +176,15 @@ class WebAppTest < Minitest::Test
   def test_project_actions_for_mixed_project_include_each_ecosystem
     app = Gemstar::Web::App.allocate
 
-    actions = app.send(:project_actions, FakeActionProject.new(scopes: [:gems, :python, :package_lock, :importmap]))
+    actions = app.send(:project_actions, FakeActionProject.new(scopes: [:gems, :python, :cargo, :package_lock, :importmap]))
     action_by_id = actions.to_h { |action| [action[:id], action] }
 
     assert_includes actions.map { |action| action[:id] }, "bundle_install"
     assert_includes actions.map { |action| action[:id] }, "uv_sync"
     assert_includes actions.map { |action| action[:id] }, "npm_install"
     assert_includes actions.map { |action| action[:id] }, "importmap_update"
+    assert_includes actions.map { |action| action[:id] }, "cargo_fetch"
+    assert_includes actions.map { |action| action[:id] }, "cargo_update"
     assert_equal %w[bin/importmap update], action_by_id.fetch("importmap_update")[:command]
   end
 
@@ -123,7 +205,7 @@ class WebAppTest < Minitest::Test
       app.stub :mise_executable, "/opt/homebrew/bin/mise" do
         command = app.send(:project_action_command, project, { command: ["bin/bundle", "update"] })
 
-        assert_equal ["/opt/homebrew/bin/mise", "exec", "--", "bin/bundle", "update"], command
+        assert_equal ["/opt/homebrew/bin/mise", "exec", "--", "ruby", "bin/bundle", "update"], command
       end
     end
   end
