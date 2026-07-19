@@ -90,6 +90,39 @@ class ChangeLogTest < Minitest::Test
     assert_includes paths, "History.rst"
   end
 
+  def test_release_notes_name_variations_are_default_candidates
+    paths = Gemstar::ChangeLog::DEFAULT_CHANGELOG_PATHS
+
+    assert_includes paths, "RELEASE_NOTES.md"
+    assert_includes paths, "release_notes.md"
+    assert_includes paths, "RELEASE-NOTES.md"
+    assert_includes paths, "release-notes.md"
+  end
+
+  def test_release_notes_version_headings_are_parsed
+    changelog = Gemstar::ChangeLog.new(FakeMetadata.new)
+    content = <<~MARKDOWN
+      # Next
+
+      - Added more consts for preconfigured configs and engines.
+
+      # 0.22.1
+
+      - Correct the symbols used for the predefined alphabet.
+
+      # 0.22.0
+
+      - Decoding is somewhat faster.
+    MARKDOWN
+
+    changelog.stub :content, content do
+      sections = changelog.send(:parse_changelog_sections)
+
+      assert_equal %w[0.22.1 0.22.0], sections.keys
+      assert_includes sections["0.22.1"].flatten.join, "Correct the symbols"
+    end
+  end
+
   def test_extensionless_changelog_uri_adds_rst_candidate
     candidates = Gemstar::ChangeLog.new(FakeMetadata.new).send(
       :changelog_uri_markdown_candidates,
@@ -149,6 +182,45 @@ class ChangeLogTest < Minitest::Test
     assert_operator candidates.index("https://raw.githubusercontent.com/whitequark/parser/master/CHANGELOG.md"),
       :<,
       candidates.index("https://raw.githubusercontent.com/whitequark/parser/v3.3.12.0/CHANGELOG.md")
+  end
+
+  def test_moved_changelog_notice_follows_linked_document
+    changelog = Gemstar::ChangeLog.new(FakeMetadata.new)
+    original_uri = "https://raw.githubusercontent.com/tokio-rs/axum/main/CHANGELOG.md"
+    destination_uri = "https://raw.githubusercontent.com/tokio-rs/axum/main/axum/CHANGELOG.md"
+    notice = "axum's changelog has moved and now lives [here](https://github.com/tokio-rs/axum/blob/main/axum/CHANGELOG.md).\n"
+    destination = <<~MARKDOWN
+      # Changelog
+
+      # 0.8.8
+
+      - Clarify documentation for `Router::route_layer`.
+    MARKDOWN
+    fetched_uris = []
+
+    changelog.stub :changelog_uri_candidates, [original_uri] do
+      changelog.stub :fetch_changelog_uri, lambda { |uri, cache_only:, force_refresh:|
+        fetched_uris << uri
+        uri == original_uri ? notice : destination
+      } do
+        assert_equal destination, changelog.content(force_refresh: true)
+      end
+    end
+
+    assert_equal [original_uri, destination_uri], fetched_uris
+  end
+
+  def test_regular_changelog_does_not_follow_incidental_links
+    changelog = Gemstar::ChangeLog.new(FakeMetadata.new)
+    content = <<~MARKDOWN
+      # Changelog
+
+      # 1.0.0
+
+      - See the release notes [here](https://example.com/releases/1.0.0).
+    MARKDOWN
+
+    assert_nil changelog.send(:changelog_redirect_uri, content, "https://example.com/CHANGELOG.md")
   end
 
   def test_changelog_heading_dates_do_not_shift_date_only_values

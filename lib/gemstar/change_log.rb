@@ -12,12 +12,16 @@ module Gemstar
   class ChangeLog
     @@candidates_found = Hash.new(0)
     GITHUB_CLI_TIMEOUT = 8
+    MAX_CHANGELOG_REDIRECTS = 3
+    CHANGELOG_REDIRECT_PATTERN = /\b(?:change\s*log|changelog|release\s+notes?)\b.{0,160}\b(?:moved|relocated|now\s+lives|lives\s+here)\b/im
     DEFAULT_CHANGELOG_PATHS = %w[
       CHANGELOG.md CHANGELOG releases.md CHANGES.md
       Changelog.md changelog.md ChangeLog.md
       Changes.md changes.md
       HISTORY.md History.md history.md
       History
+      RELEASE_NOTES.md Release_Notes.md release_notes.md
+      RELEASE-NOTES.md Release-Notes.md release-notes.md
       CHANGELOG.rst Changelog.rst changelog.rst ChangeLog.rst
       CHANGES.rst Changes.rst changes.rst
       HISTORY.rst History.rst history.rst
@@ -43,7 +47,7 @@ module Gemstar
       return @sections if !cache_only && defined?(@sections) && !force_refresh
 
       metadata_key = @metadata.respond_to?(:cache_key) ? @metadata.cache_key : @metadata.gem_name
-      cache_key = "sections-v8-#{metadata_key}"
+      cache_key = "sections-v10-#{metadata_key}"
       serialized = if cache_only
         Cache.peek(cache_key)
       else
@@ -285,15 +289,14 @@ module Gemstar
       content = nil
 
       changelog_uri_candidates(cache_only: cache_only, force_refresh: force_refresh).find do |candidate|
-        content = if cache_only
-          Cache.peek("changelog-#{candidate}")
-        else
-          Cache.fetch("changelog-#{candidate}", force: force_refresh) do
-            URI.open(candidate, read_timeout: 8)&.read
-          rescue => e
-            puts "#{candidate}: #{e}" if Gemstar.debug?
-            nil
-          end
+        content = fetch_changelog_uri(candidate, cache_only: cache_only, force_refresh: force_refresh)
+        if content
+          content = follow_changelog_redirects(
+            content,
+            source_uri: candidate,
+            cache_only: cache_only,
+            force_refresh: force_refresh
+          )
         end
 
         # puts "fetch_changelog_content #{candidate}:\n#{content}" if Gemstar.debug?
@@ -306,6 +309,65 @@ module Gemstar
       end
 
       content
+    end
+
+    def fetch_changelog_uri(uri, cache_only:, force_refresh:)
+      if cache_only
+        Cache.peek("changelog-#{uri}")
+      else
+        Cache.fetch("changelog-#{uri}", force: force_refresh) do
+          URI.open(uri, read_timeout: 8)&.read
+        rescue => e
+          puts "#{uri}: #{e}" if Gemstar.debug?
+          nil
+        end
+      end
+    end
+
+    def follow_changelog_redirects(content, source_uri:, cache_only:, force_refresh:)
+      current_content = content
+      current_uri = source_uri
+      visited = {source_uri => true}
+
+      MAX_CHANGELOG_REDIRECTS.times do
+        redirect_uri = changelog_redirect_uri(current_content, current_uri)
+        break if redirect_uri.nil? || visited[redirect_uri]
+
+        redirected_content = fetch_changelog_uri(
+          redirect_uri,
+          cache_only: cache_only,
+          force_refresh: force_refresh
+        )
+        break if redirected_content.nil? || redirected_content.strip.empty?
+
+        puts "Following changelog redirect: #{current_uri} -> #{redirect_uri}" if Gemstar.debug?
+        visited[redirect_uri] = true
+        current_uri = redirect_uri
+        current_content = redirected_content
+      end
+
+      current_content
+    end
+
+    def changelog_redirect_uri(content, source_uri)
+      text = content.to_s
+      return nil if text.bytesize > 4096 || text.lines.count > 12
+      return nil unless text.match?(CHANGELOG_REDIRECT_PATTERN)
+
+      links = text.scan(/\[([^\]]+)\]\(\s*<?([^\s)>]+)>?(?:\s+["'][^"']*["'])?\s*\)/)
+      redirect_link = links.find { |link_label, _| link_label.match?(/\A(?:here|changelog|change\s*log|release\s+notes?)\z/i) }
+      redirect_link ||= links.find { |_, link_href| link_href.match?(%r{(?:change(?:log|s)|history|releases?)}i) }
+      href = redirect_link&.last
+      return nil if href.nil?
+
+      resolved = URI.join(source_uri, CGI.unescapeHTML(href)).to_s
+      uri = URI(Gemstar::GitHub::github_blob_to_raw(resolved))
+      return nil unless %w[http https].include?(uri.scheme)
+
+      uri.fragment = nil
+      uri.to_s
+    rescue URI::InvalidURIError
+      nil
     end
 
     VERSION_PATTERNS = [
