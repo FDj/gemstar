@@ -8,6 +8,7 @@
         --line: #ddcfbf;
         --accent: #b44d25;
         --accent-soft: rgba(180, 77, 37, 0.14);
+        --focus: #2563c9;
         --green: #2f8f5b;
         --green-soft: rgba(47, 143, 91, 0.12);
         --red: #a9473c;
@@ -414,6 +415,11 @@
         align-content: start;
         min-height: 0;
         overflow: auto;
+      }
+      .detail:focus {
+        outline: none;
+        border-color: var(--focus);
+        box-shadow: 0 0 0 1px var(--focus);
       }
       .detail-hero,
       .panel-heading {

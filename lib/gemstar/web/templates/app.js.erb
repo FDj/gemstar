@@ -183,6 +183,22 @@
     }
   };
 
+  const keepSidebarLinkVisible = (link) => {
+    if (!sidebarPanel || !link) return;
+
+    const panelBounds = sidebarPanel.getBoundingClientRect();
+    const stickyHeader = sidebarPanel.querySelector(".sidebar-header");
+    const headerBounds = stickyHeader && stickyHeader.getBoundingClientRect();
+    const linkBounds = link.getBoundingClientRect();
+    const visibleTop = headerBounds ? Math.max(panelBounds.top, headerBounds.bottom) : panelBounds.top;
+
+    if (linkBounds.top < visibleTop) {
+      sidebarPanel.scrollTop -= visibleTop - linkBounds.top;
+    } else if (linkBounds.bottom > panelBounds.bottom) {
+      sidebarPanel.scrollTop += linkBounds.bottom - panelBounds.bottom;
+    }
+  };
+
   const syncSidebarSelection = (gemName = null, keepVisible = false) => {
     const effectiveGemName = gemName || requestedGemName();
     if (!effectiveGemName) {
@@ -200,7 +216,7 @@
     });
 
     if (keepVisible && sidebarPanel && selectedLink) {
-      selectedLink.scrollIntoView({ block: "nearest" });
+      keepSidebarLinkVisible(selectedLink);
     }
   };
 
