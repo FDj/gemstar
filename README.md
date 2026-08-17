@@ -7,39 +7,42 @@ Helps you keep track of your Ruby gems, JavaScript packages, Python packages, an
 
 ## Installation
 
-The easiest way to install gemstar is to use Bundler:
+If you use mise, as you should:
 
 ```shell
-# Shell
+mise use -g ruby
+mise use -g gem:gemstar@latest
+gemstar
+```
+
+This will first install Ruby and then gemstar through mise's gem backend.
+
+Or if you're using Ruby:
+
+```shell
 gem install gemstar
+gemstar
 ```
 
-Alternatively, add it to the development group in your Gemfile:
+You can also add gemstar to your Gemfile:
 
-```
+```rb
 gem "gemstar", group: :development
 ```
 
 ## Usage
 
-### gemstar server
+### gemstar
+
+This starts the interactive web UI:
 
 ![Gemstar diff command output](docs/server.png)
 
-Start the interactive web UI:
+By default, the server listens on http://127.0.0.1:2112/. To customize settings, see the built-in help:
 
 ```shell
-gemstar server
+gemstar help server
 ```
-
-By default, the server listens to http://127.0.0.1:2112/
-
-To open the root page in your browser after startup:
-
-```shell
-gemstar server --open
-```
-
 
 ### gemstar diff
 
@@ -63,7 +66,7 @@ gemstar diff --from 8e3aa96b7027834cdbabc0d8cbd5f9455165e930 --to HEAD
 To use a time range instead of choosing the starting commit yourself:
 
 ```shell
-gemstar diff --project ~/Code/my-app --since "3 weeks"
+gemstar diff --project ~/Code/my-app --since "3 weeks ago"
 ```
 
 To examine a specific Gemfile.lock, pass it like this:
