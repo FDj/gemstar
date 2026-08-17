@@ -1734,7 +1734,7 @@ module Gemstar
 
         <<~HTML
           <div class="detail-inline-actions">
-            <button type="button" class="action" data-detail-use-gh data-release-version="#{h(version)}">Use GitHub CLI</button>
+            <button type="button" class="action" data-detail-use-gh data-release-version="#{h(version)}">Try GitHub CLI</button>
           </div>
         HTML
       end

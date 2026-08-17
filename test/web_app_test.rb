@@ -378,7 +378,7 @@ class WebAppTest < Minitest::Test
   def test_github_cli_release_button_only_renders_for_github_repo
     app = Gemstar::Web::App.allocate
 
-    assert_includes app.send(:render_github_cli_release_button, "1.2.3", "https://github.com/basecamp/lexxy"), "Use GitHub CLI"
+    assert_includes app.send(:render_github_cli_release_button, "1.2.3", "https://github.com/basecamp/lexxy"), "Try GitHub CLI"
     assert_empty app.send(:render_github_cli_release_button, "1.2.3", "https://example.com/basecamp/lexxy")
   end
 end

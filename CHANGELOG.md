@@ -1,5 +1,9 @@
 # Change Log
 
+## Unreleased
+
+- "Use GitHub CLI" button renamed to "Try GitHub CLI", seems clearer.
+
 ## 1.3
 
 - **Python uv projects** are now supported with our new `uv.lock` file parser and pypi package support!
