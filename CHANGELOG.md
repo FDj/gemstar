@@ -3,6 +3,7 @@
 ## 1.3
 
 - **Python uv projects** are now supported with our new `uv.lock` file parser and pypi package support!
+- **Rust Cargo projects** are now supported with a new `Cargo.lock` parser and crates.io package support!
 - Changelogs in rst format are now supported.
 - Changelogs: Fix parsing of documentation percentages, linked version headings, and version-first headings with dotted dates.
 - Changelogs: Do not treat version-looking prose inside release notes as a new release heading.
