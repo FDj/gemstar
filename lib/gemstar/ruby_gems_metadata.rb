@@ -182,8 +182,20 @@ module Gemstar
     end
 
     def expand_metadata_template(value, cache_only: false, force_refresh: false)
-      version = meta(cache_only: cache_only, force_refresh: force_refresh)&.dig("version").to_s
+      version = metadata_template_version(cache_only: cache_only, force_refresh: force_refresh)
       value.to_s.gsub("{gem_name}", gem_name).gsub("{version}", version)
+    end
+
+    def metadata_template_version(cache_only: false, force_refresh: false)
+      version = meta(cache_only: cache_only, force_refresh: force_refresh)&.dig("version").to_s
+      return version unless version.empty?
+
+      override_versions = package_metadata.dig("changelog", "version_overrides")
+      Array(override_versions&.values).compact.map(&:to_s).reject(&:empty?).max_by do |override_version|
+        Gem::Version.new(override_version)
+      rescue ArgumentError
+        Gem::Version.new("0")
+      end.to_s
     end
 
     def format_registry_release_date(datetime)
